@@ -105,7 +105,3 @@ The asking-rent benchmark by bedroom for a ZIP (Zillow plus Apartment List):
 Look up one property's assessed-value history (the flat stretches are the Prop 13 cap; the jump is a reassessment on sale):
 
 ![Property lookup](docs/screenshots/property-lookup.png)
-
-The layout is responsive:
-
-![Mobile view](docs/screenshots/mobile-overview.png)
