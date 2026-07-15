@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF Housing &amp; Rent Trend Explorer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌉</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="aurora" aria-hidden="true"></div>
+  <div class="wrap header-row">
+    <div>
+      <div class="brand"><span class="brand-mark">🌉</span> SF Rent Trends</div>
+      <h1>Apartment-hunt scratchpad</h1>
+      <p class="tagline">Rents, property values, and eviction activity across San
+        Francisco — type a neighborhood or a ZIP to dig in.</p>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- What this data is (and isn't) -->
+  <details class="caveats">
+    <summary>What this data measures — and what it doesn't</summary>
+    <ul>
+      <li><strong>Assessed value is not market price or rent.</strong> California's
+        Prop 13 caps assessed-value growth at ~2%/yr until a property changes hands,
+        so medians here run far below market and move slowly. Use the <em>shape</em>
+        of the trend (and jumps when properties sell), not the dollar level.</li>
+      <li><strong>An eviction notice is not a completed eviction.</strong> These are
+        notices filed with the SF Rent Board. Many are resolved, withdrawn, or never
+        result in a tenant leaving. A notice can also cite more than one reason.</li>
+      <li><strong>The rent benchmark is a separate, external estimate — not a listing.</strong>
+        DataSF has no rent data, so asking-rent figures come from Zillow's rent index
+        and Apartment List (both public). They show a neighborhood's typical rent and
+        trend; per-bedroom figures are estimates, mapped by ZIP, and reflect all home
+        types. Use them to calibrate expectations, not as a quote for any specific unit.</li>
+    </ul>
+  </details>
+
+  <!-- Controls -->
+  <section class="card controls-card">
+    <div class="controls-row">
+      <div class="hood-picker">
+        <label for="hood-input">Areas <span class="hint">(neighborhood or ZIP · compare up to 3)</span></label>
+        <div class="hood-input-row">
+          <input id="hood-input" list="hood-options" placeholder="e.g. Bernal Heights or 94110…" autocomplete="off">
+          <datalist id="hood-options"></datalist>
+          <button id="hood-add" class="btn">Add</button>
+        </div>
+        <div id="hood-chips" class="chips" aria-live="polite"></div>
+      </div>
+      <div class="use-picker">
+        <label id="use-label">Property type <span class="hint">(assessed values)</span></label>
+        <div class="segmented" role="group" aria-labelledby="use-label">
+          <button data-use="res" class="seg active">All residential</button>
+          <button data-use="sfr" class="seg">Single-family</button>
+          <button data-use="mfr" class="seg">Multi-family</button>
+          <button data-use="all" class="seg">All parcels</button>
+        </div>
+      </div>
+    </div>
+    <div id="status" class="status" hidden></div>
+  </section>
+
+  <!-- Rent heat map (the pre-search view) -->
+  <section class="card" id="card-map">
+    <div class="chart-head">
+      <div>
+        <h2>Asking rent across the city</h2>
+        <p class="chart-sub">Typical asking rent by ZIP, all unit sizes (Zillow rent
+          index, latest month) · darker&nbsp;=&nbsp;pricier · <strong>click a ZIP to
+          add it</strong> to the comparison.</p>
+      </div>
+    </div>
+    <div id="map-status" class="status" hidden></div>
+    <div class="map-wrap">
+      <div id="map-box"></div>
+      <div class="map-legend" id="map-legend" hidden>
+        <span id="legend-min"></span>
+        <div class="legend-ramp"></div>
+        <span id="legend-max"></span>
+      </div>
+    </div>
+    <div id="map-tip" class="map-tip" hidden></div>
+  </section>
+
+  <!-- Summary tiles -->
+  <section id="tiles" class="tiles"></section>
+
+  <!-- Rent benchmark — what to aim for -->
+  <section class="card" id="card-rent">
+    <div class="chart-head">
+      <div>
+        <h2>What a rental here runs — asking-rent benchmark</h2>
+        <p class="chart-sub">Market asking rent from <strong>Zillow's rent index
+          (ZORI)</strong> by ZIP, with bedroom mix from <strong>Apartment List</strong>.
+          This is <em>external</em> to the assessor/eviction data above — and it's a
+          benchmark, not a live listing or a quote.</p>
+      </div>
+      <button class="btn ghost" id="rent-refresh" title="Re-download rent index data">↻</button>
+    </div>
+    <div id="rent-status" class="status" hidden></div>
+    <div id="rent-panels" class="rent-grid"></div>
+    <div id="rent-metro" class="rent-metro"></div>
+    <p class="chart-note" id="rent-note"></p>
+  </section>
+
+  <!-- Charts -->
+  <section class="card chart-card" id="card-values">
+    <div class="chart-head">
+      <div>
+        <h2>Median assessed value per parcel</h2>
+        <p class="chart-sub">Secured tax roll, 2007–2025 · assessed value = land +
+          improvements + fixtures · <em>lags market prices by design (Prop 13)</em></p>
+      </div>
+      <button class="btn ghost table-toggle" data-chart="values">Table</button>
+    </div>
+    <div class="plot"><canvas id="chart-values"></canvas></div>
+    <div class="table-view" id="table-values" hidden></div>
+    <p class="chart-note" id="note-values"></p>
+  </section>
+
+  <section class="card chart-card" id="card-evictions">
+    <div class="chart-head">
+      <div>
+        <h2>Eviction notices filed per year</h2>
+        <p class="chart-sub">Notices filed with the SF Rent Board, 1997–present ·
+          a notice is a filing, <em>not</em> a completed eviction</p>
+      </div>
+      <button class="btn ghost table-toggle" data-chart="evictions">Table</button>
+    </div>
+    <div class="plot"><canvas id="chart-evictions"></canvas></div>
+    <div class="table-view" id="table-evictions" hidden></div>
+    <p class="chart-note" id="note-evictions"></p>
+  </section>
+
+  <section class="card chart-card" id="card-reasons">
+    <div class="chart-head">
+      <div>
+        <h2>Eviction notices by stated reason</h2>
+        <p class="chart-sub">All years combined · one notice can cite several reasons,
+          so reasons sum to more than the notice count</p>
+      </div>
+      <button class="btn ghost table-toggle" data-chart="reasons">Table</button>
+    </div>
+    <div class="plot plot-tall"><canvas id="chart-reasons"></canvas></div>
+    <div class="table-view" id="table-reasons" hidden></div>
+  </section>
+
+  <!-- Address / parcel lookup -->
+  <section class="card" id="lookup-card">
+    <h2>Look up a specific property</h2>
+    <p class="chart-sub">Search by street address (e.g. <code>1380 Greenwich</code>)
+      or parcel/APN number (e.g. <code>0501052</code>) to see one property's
+      assessed-value history.</p>
+    <div class="lookup-row">
+      <input id="lookup-input" placeholder="Address or parcel number…" autocomplete="off">
+      <button id="lookup-btn" class="btn primary">Search</button>
+    </div>
+    <div id="lookup-status" class="status" hidden></div>
+    <div id="lookup-results"></div>
+    <div id="parcel-detail" hidden>
+      <div class="chart-head">
+        <div>
+          <h3 id="parcel-title"></h3>
+          <p class="chart-sub" id="parcel-sub"></p>
+        </div>
+      </div>
+      <div class="plot"><canvas id="chart-parcel"></canvas></div>
+      <p class="chart-note">Big jumps usually mean the property sold and was
+        reassessed at market value; flat ~2%/yr stretches are the Prop 13 cap.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>Data: <a href="https://data.sfgov.org/Housing-and-Buildings/Assessor-Historical-Secured-Property-Tax-Rolls/wv5m-vpq2" target="_blank" rel="noopener">Assessor Historical Secured Property Tax Rolls</a>
+      and <a href="https://data.sfgov.org/Housing-and-Buildings/Eviction-Notices/5cei-gny5" target="_blank" rel="noopener">Eviction Notices</a>
+      via DataSF · cached locally in <code>data/cache.db</code> · use the ↻ on a
+      neighborhood chip to re-download its data.</p>
+  </footer>
+
+</main>
+
+<script src="/vendor/chart.umd.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

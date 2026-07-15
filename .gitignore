@@ -1,0 +1,22 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+
+# --- Local data cache ---
+# Rebuilt on demand from DataSF, Zillow, and Apartment List (see README).
+data/cache.db
+data/cache.db-wal
+data/cache.db-shm
+
+# --- Secrets / local environment ---
+# The .claude launch config holds a real Census API key. Never commit it.
+.env
+.env.*
+!.env.example
+.claude/
+
+# --- Editor / OS ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
