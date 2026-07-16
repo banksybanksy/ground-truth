@@ -1,4 +1,4 @@
-# SF Housing & Rent Trend Explorer
+# Ground Truth
 
 Get a feel for a San Francisco neighborhood while apartment hunting: a citywide rent heat map, historical assessed property values, eviction-notice activity, and an asking-rent benchmark by bedroom, searchable by neighborhood or ZIP.
 
@@ -17,7 +17,7 @@ I was apartment hunting and wanted one place to sanity-check a neighborhood: is 
 | Source | What it provides | API key | Updates |
 |---|---|---|---|
 | [Assessor Historical Secured Property Tax Rolls](https://data.sfgov.org/Housing-and-Buildings/Assessor-Historical-Secured-Property-Tax-Rolls/wv5m-vpq2) (`wv5m-vpq2`) | Assessed value (land + improvements + fixtures) per parcel per roll year, 2007 to 2025; property lookup | No | About yearly |
-| [Eviction Notices](https://data.sfgov.org/Housing-and-Buildings/Eviction-Notices/5cei-gny5) (`5cei-gny5`) | Notices filed with the SF Rent Board, 1997 to present, with reason flags | No | Daily |
+| [Eviction Notices](https://data.sfgov.org/Housing-and-Buildings/Eviction-Notices/5cei-gny5) (`5cei-gny5`) | Notices filed with the SF Rent Board, 1997 to present, with reason flags | No | Monthly |
 | [Zillow ZORI](https://www.zillow.com/research/data/) (ZIP level) | Asking-rent index by ZIP, all home types | No | Monthly |
 | [Apartment List Rent Estimates](https://www.apartmentlist.com/research/category/data-rent-estimates) | SF-metro overall / 1BR / 2BR, supplies the bedroom mix | No | Monthly |
 | [Census ACS B25031](https://www.census.gov/data/developers/data-sets/acs-5year.html) (optional) | Measured citywide median rent by bedroom | Free key | Yearly (5-year ACS) |
@@ -105,7 +105,3 @@ The asking-rent benchmark by bedroom for a ZIP (Zillow plus Apartment List):
 Look up one property's assessed-value history (the flat stretches are the Prop 13 cap; the jump is a reassessment on sale):
 
 ![Property lookup](docs/screenshots/property-lookup.png)
-
-The layout is responsive:
-
-![Mobile view](docs/screenshots/mobile-overview.png)
