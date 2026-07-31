@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SF Housing &amp; Rent Trend Explorer</title>
+<title>Rent Trends · Our Little Internet</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌉</text></svg>">
 <link rel="stylesheet" href="/styles.css">
 </head>
@@ -13,10 +13,11 @@
   <div class="aurora" aria-hidden="true"></div>
   <div class="wrap header-row">
     <div>
-      <div class="brand"><span class="brand-mark">🌉</span> SF Rent Trends</div>
-      <h1>Apartment-hunt scratchpad</h1>
-      <p class="tagline">Rents, property values, and eviction activity across San
-        Francisco — type a neighborhood or a ZIP to dig in.</p>
+      <div class="brand"><span class="brand-mark">🌉</span> Rent Trends</div>
+      <h1>Six neighborhoods, fewer bad guesses.</h1>
+      <p class="tagline">Rents, property values, and eviction activity where we
+        actually look: Portola, Bernal Heights, Marina, Pacific Heights, Twin Peaks,
+        and West Portal.</p>
     </div>
   </div>
 </header>
@@ -46,13 +47,22 @@
   <section class="card controls-card">
     <div class="controls-row">
       <div class="hood-picker">
-        <label for="hood-input">Areas <span class="hint">(neighborhood or ZIP · compare up to 3)</span></label>
+        <label for="hood-input">Neighborhoods <span class="hint">(compare up to 3)</span></label>
+        <div class="quick-hoods" aria-label="Our neighborhoods">
+          <button type="button" class="quick-hood" data-hood="Portola">Portola</button>
+          <button type="button" class="quick-hood" data-hood="Bernal Heights">Bernal Heights</button>
+          <button type="button" class="quick-hood" data-hood="Marina">Marina</button>
+          <button type="button" class="quick-hood" data-hood="Pacific Heights">Pacific Heights</button>
+          <button type="button" class="quick-hood" data-hood="Twin Peaks">Twin Peaks</button>
+          <button type="button" class="quick-hood" data-hood="West of Twin Peaks">West Portal</button>
+        </div>
         <div class="hood-input-row">
-          <input id="hood-input" list="hood-options" placeholder="e.g. Bernal Heights or 94110…" autocomplete="off">
+          <input id="hood-input" list="hood-options" placeholder="Or type one of the six…" autocomplete="off">
           <datalist id="hood-options"></datalist>
           <button id="hood-add" class="btn">Add</button>
         </div>
         <div id="hood-chips" class="chips" aria-live="polite"></div>
+        <p class="hood-note">West Portal uses San Francisco’s broader “West of Twin Peaks” reporting area.</p>
       </div>
       <div class="use-picker">
         <label id="use-label">Property type <span class="hint">(assessed values)</span></label>

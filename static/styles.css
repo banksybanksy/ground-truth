@@ -184,6 +184,36 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 label { display: block; font-weight: 650; margin-bottom: 8px; }
 .hint { font-weight: 400; color: var(--text-muted); font-size: 13px; }
 .hood-input-row { display: flex; gap: 8px; }
+.quick-hoods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.quick-hood {
+  min-height: 44px;
+  border: 1px solid var(--baseline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: background .16s, border-color .16s, color .16s, transform .12s;
+}
+.quick-hood:hover { border-color: var(--text-muted); color: var(--text-primary); }
+.quick-hood:active { transform: scale(.98); }
+.quick-hood.active {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+  color: var(--brand-strong);
+}
+.quick-hood:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--brand-wash); }
+.hood-note { margin: 9px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
 input {
   background: var(--surface-1);
   border: 1.5px solid var(--baseline);
@@ -514,6 +544,12 @@ input:focus {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 640px) {
+  .wrap { padding-inline: 15px; }
+  .site-header { padding-block: 21px 18px; }
+  .quick-hoods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-hood { min-height: 48px; }
+  .hood-input-row .btn { padding-inline: 15px; }
+  .controls-row { gap: 22px; }
   .plot { height: 280px; }
   .segmented { flex-wrap: wrap; }
   .rent-hero .num { font-size: 30px; }

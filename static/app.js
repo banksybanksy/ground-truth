@@ -25,6 +25,26 @@ const state = {
 };
 
 const ZIP_RE = /^94\d{3}$/;
+const FEATURED_HOODS = [
+  { name: "Portola", label: "Portola" },
+  { name: "Bernal Heights", label: "Bernal Heights" },
+  { name: "Marina", label: "Marina" },
+  { name: "Pacific Heights", label: "Pacific Heights" },
+  { name: "Twin Peaks", label: "Twin Peaks" },
+  { name: "West of Twin Peaks", label: "West Portal" },
+];
+
+function normalizeHoodName(name) {
+  const trimmed = name.trim();
+  const match = FEATURED_HOODS.find((hood) =>
+    hood.name.toLowerCase() === trimmed.toLowerCase() ||
+    hood.label.toLowerCase() === trimmed.toLowerCase());
+  return match?.name || trimmed;
+}
+
+function displayHoodName(name) {
+  return FEATURED_HOODS.find((hood) => hood.name === name)?.label || name;
+}
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -140,7 +160,7 @@ async function loadHoodList() {
   const res = await fetch("/api/neighborhoods");
   if (!res.ok) throw new Error((await res.json()).error || "failed to load neighborhoods");
   state.allHoods = (await res.json()).neighborhoods
-    .filter((h) => h.assessor_rows > 500); // skip parks/tiny slivers
+    .filter((h) => FEATURED_HOODS.some((featured) => featured.name === h.name));
   rebuildDatalist();
 }
 
@@ -149,13 +169,7 @@ function rebuildDatalist() {
   dl.textContent = "";
   for (const h of state.allHoods) {
     const opt = document.createElement("option");
-    opt.value = h.name;
-    dl.append(opt);
-  }
-  for (const f of state.map?.features || []) {
-    const opt = document.createElement("option");
-    opt.value = f.zip;
-    opt.label = `${f.zip} — ${f.hoods.join(", ")}`;
+    opt.value = displayHoodName(h.name);
     dl.append(opt);
   }
 }
@@ -171,13 +185,15 @@ function freeSlot() {
 }
 
 function addHood(name) {
+  name = normalizeHoodName(name);
   const zip = ZIP_RE.test(name);
+  const featured = FEATURED_HOODS.some((hood) => hood.name === name);
   if (zip && state.map && !state.map.features.some((f) => f.zip === name)) {
     showStatus(`${name} isn't an SF ZIP I have data for.`, { error: true });
     return;
   }
-  if (!zip && !hoodInfo(name)) {
-    showStatus(`"${name}" isn't an SF Analysis Neighborhood or ZIP — pick one from the list.`, { error: true });
+  if (!zip && !featured && !hoodInfo(name)) {
+    showStatus(`"${name}" isn't one of the six neighborhoods — pick one above.`, { error: true });
     return;
   }
   if (state.selected.some((s) => s.name === name)) return;
@@ -198,7 +214,7 @@ function removeHood(name) {
 }
 
 function chipLabel(name) {
-  return ZIP_RE.test(name) ? `ZIP ${name}` : name;
+  return ZIP_RE.test(name) ? `ZIP ${name}` : displayHoodName(name);
 }
 
 function renderChips() {
@@ -226,6 +242,11 @@ function renderChips() {
     chip.append(refresh, close);
     box.append(chip);
   }
+  document.querySelectorAll(".quick-hood").forEach((button) => {
+    const active = state.selected.some((selected) => selected.name === button.dataset.hood);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
   updateMapSelection();
 }
 
@@ -1123,8 +1144,19 @@ function wire() {
   });
   // datalist click-selection fires "change"
   $("#hood-input").addEventListener("change", () => {
-    const v = $("#hood-input").value.trim();
+    const v = normalizeHoodName($("#hood-input").value);
     if (hoodInfo(v)) addHood(v);
+  });
+
+  document.querySelectorAll(".quick-hood").forEach((button) => {
+    button.onclick = () => {
+      const name = button.dataset.hood;
+      if (state.selected.some((selected) => selected.name === name)) {
+        removeHood(name);
+      } else {
+        addHood(name);
+      }
+    };
   });
 
   document.querySelectorAll(".seg").forEach((b) => {
@@ -1167,7 +1199,7 @@ async function init() {
   loadMap();   // heat map is the pre-search view; loads independently
   try {
     await loadHoodList();
-    showStatus("Type a neighborhood or ZIP above — or click a ZIP on the map below. First load of an area downloads its records (a few seconds; the biggest neighborhoods take a minute).");
+    showStatus("Pick up to three neighborhoods. The first look downloads their public records; after that they load from the local cache.");
   } catch (e) {
     showStatus(`Couldn't reach the server or DataSF: ${e.message}`, { error: true });
   }
