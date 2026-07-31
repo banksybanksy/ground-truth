@@ -2,6 +2,10 @@
 
 Get a feel for a San Francisco neighborhood while apartment hunting: a citywide rent heat map, historical assessed property values, eviction-notice activity, and an asking-rent benchmark by bedroom, searchable by neighborhood or ZIP.
 
+The hosted edition is intentionally narrowed to Portola, Bernal Heights,
+Marina, Pacific Heights, Twin Peaks, and West Portal. Run `python3
+export_static.py` to refresh the precomputed JSON used by the static site.
+
 ![Citywide asking-rent heat map by ZIP](docs/screenshots/rent-heatmap.png)
 
 ## What it does

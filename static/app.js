@@ -46,6 +46,10 @@ function displayHoodName(name) {
   return FEATURED_HOODS.find((hood) => hood.name === name)?.label || name;
 }
 
+function hoodSlug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -157,7 +161,7 @@ function hideStatus() {
 // Neighborhood picker
 
 async function loadHoodList() {
-  const res = await fetch("/api/neighborhoods");
+  const res = await fetch("/data/neighborhoods.json");
   if (!res.ok) throw new Error((await res.json()).error || "failed to load neighborhoods");
   state.allHoods = (await res.json()).neighborhoods
     .filter((h) => FEATURED_HOODS.some((featured) => featured.name === h.name));
@@ -188,8 +192,8 @@ function addHood(name) {
   name = normalizeHoodName(name);
   const zip = ZIP_RE.test(name);
   const featured = FEATURED_HOODS.some((hood) => hood.name === name);
-  if (zip && state.map && !state.map.features.some((f) => f.zip === name)) {
-    showStatus(`${name} isn't an SF ZIP I have data for.`, { error: true });
+  if (zip) {
+    showStatus("Pick one of the six neighborhoods above.", { error: true });
     return;
   }
   if (!zip && !featured && !hoodInfo(name)) {
@@ -233,13 +237,10 @@ function renderChips() {
       const info = hoodInfo(s.name) || {};
       chip.append(el("span", "meta", `${fmtInt(info.assessor_rows)} records`));
     }
-    const refresh = el("button", null, "↻");
-    refresh.title = "Re-download this area's data";
-    refresh.onclick = () => refreshHood(s.name);
     const close = el("button", null, "×");
     close.title = "Remove";
     close.onclick = () => removeHood(s.name);
-    chip.append(refresh, close);
+    chip.append(close);
     box.append(chip);
   }
   document.querySelectorAll(".quick-hood").forEach((button) => {
@@ -263,7 +264,7 @@ async function loadMap() {
   status.hidden = false;
   status.textContent = "Loading the rent map (boundaries come from the Census, once)…";
   try {
-    const res = await fetch("/api/rentmap");
+    const res = await fetch("/data/rentmap.json");
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     state.map = body;
@@ -329,7 +330,6 @@ function renderMap() {
     const has = f.value != null;
     if (has) {
       path.setAttribute("fill", rampColor(f.value));
-      path.addEventListener("click", () => addHood(f.zip));
     } else {
       path.setAttribute("fill", "var(--wash)");
       path.classList.add("nodata");
@@ -432,20 +432,16 @@ async function updateTrends() {
     renderAll();
     return;
   }
-  const uncached = names.filter((n) => !ZIP_RE.test(n) && !(hoodInfo(n) || {}).cached);
-  if (uncached.length) {
-    showStatus(`Contacting DataSF for ${uncached.join(", ")}…`, { progress: 0 });
-    startPolling(uncached);
-  } else {
-    showStatus("Loading…");
-  }
+  showStatus("Loading…");
   try {
-    const qs = `hoods=${encodeURIComponent(names.join("|"))}&use=${state.use}`;
-    const res = await fetch(`/api/trends?${qs}`);
-    const body = await res.json();
+    const rows = await Promise.all(names.map(async (name) => {
+      const res = await fetch(`/data/trends/${hoodSlug(name)}-${state.use}.json`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return [name, body];
+    }));
     if (token !== state.requestToken) return; // superseded by a newer request
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    state.data = body.hoods;
+    state.data = Object.fromEntries(rows);
     for (const n of names) {
       const info = hoodInfo(n);
       if (info) info.cached = true;
@@ -472,7 +468,7 @@ async function loadRent(names) {
   status.classList.remove("error");
   status.textContent = "Loading rent index…";
   try {
-    const res = await fetch(`/api/rent?hoods=${encodeURIComponent(names.join("|"))}`);
+    const res = await fetch("/data/rent.json");
     const body = await res.json();
     if (token !== state.rentToken) return;
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
@@ -1172,13 +1168,6 @@ function wire() {
     b.onclick = () => toggleTable(b.dataset.chart, b);
   });
 
-  $("#rent-refresh").onclick = refreshRent;
-
-  $("#lookup-btn").onclick = runLookup;
-  $("#lookup-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") runLookup();
-  });
-
   // Dark mode has its own palette steps — rebuild charts when the scheme flips.
   // (Guard against spurious 'change' events that report the same scheme.)
   const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1199,7 +1188,7 @@ async function init() {
   loadMap();   // heat map is the pre-search view; loads independently
   try {
     await loadHoodList();
-    showStatus("Pick up to three neighborhoods. The first look downloads their public records; after that they load from the local cache.");
+    showStatus("Pick up to three neighborhoods. Their public data is already packed in, so comparisons load right away.");
   } catch (e) {
     showStatus(`Couldn't reach the server or DataSF: ${e.message}`, { error: true });
   }

@@ -321,10 +321,10 @@ input:focus {
 #map-box .zip-shape {
   stroke: var(--surface-1);
   stroke-width: 1.2;
-  cursor: pointer;
+  cursor: default;
   transition: filter .15s, stroke-width .15s;
 }
-#map-box .zip-shape:hover { filter: brightness(1.08) saturate(1.1); stroke-width: 2.5; }
+#map-box .zip-shape:hover { filter: brightness(1.04); }
 #map-box .zip-shape.selected { stroke: var(--text-primary); stroke-width: 2.5; }
 #map-box .zip-shape.nodata { cursor: default; }
 #map-box .zip-label { pointer-events: none; font-weight: 700; }

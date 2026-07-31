@@ -83,8 +83,7 @@
       <div>
         <h2>Asking rent across the city</h2>
         <p class="chart-sub">Typical asking rent by ZIP, all unit sizes (Zillow rent
-          index, latest month) · darker&nbsp;=&nbsp;pricier · <strong>click a ZIP to
-          add it</strong> to the comparison.</p>
+          index, latest month) · darker&nbsp;=&nbsp;pricier · shown for citywide context.</p>
       </div>
     </div>
     <div id="map-status" class="status" hidden></div>
@@ -112,7 +111,6 @@
           This is <em>external</em> to the assessor/eviction data above — and it's a
           benchmark, not a live listing or a quote.</p>
       </div>
-      <button class="btn ghost" id="rent-refresh" title="Re-download rent index data">↻</button>
     </div>
     <div id="rent-status" class="status" hidden></div>
     <div id="rent-panels" class="rent-grid"></div>
@@ -162,36 +160,11 @@
     <div class="table-view" id="table-reasons" hidden></div>
   </section>
 
-  <!-- Address / parcel lookup -->
-  <section class="card" id="lookup-card">
-    <h2>Look up a specific property</h2>
-    <p class="chart-sub">Search by street address (e.g. <code>1380 Greenwich</code>)
-      or parcel/APN number (e.g. <code>0501052</code>) to see one property's
-      assessed-value history.</p>
-    <div class="lookup-row">
-      <input id="lookup-input" placeholder="Address or parcel number…" autocomplete="off">
-      <button id="lookup-btn" class="btn primary">Search</button>
-    </div>
-    <div id="lookup-status" class="status" hidden></div>
-    <div id="lookup-results"></div>
-    <div id="parcel-detail" hidden>
-      <div class="chart-head">
-        <div>
-          <h3 id="parcel-title"></h3>
-          <p class="chart-sub" id="parcel-sub"></p>
-        </div>
-      </div>
-      <div class="plot"><canvas id="chart-parcel"></canvas></div>
-      <p class="chart-note">Big jumps usually mean the property sold and was
-        reassessed at market value; flat ~2%/yr stretches are the Prop 13 cap.</p>
-    </div>
-  </section>
-
   <footer class="footer">
     <p>Data: <a href="https://data.sfgov.org/Housing-and-Buildings/Assessor-Historical-Secured-Property-Tax-Rolls/wv5m-vpq2" target="_blank" rel="noopener">Assessor Historical Secured Property Tax Rolls</a>
       and <a href="https://data.sfgov.org/Housing-and-Buildings/Eviction-Notices/5cei-gny5" target="_blank" rel="noopener">Eviction Notices</a>
-      via DataSF · cached locally in <code>data/cache.db</code> · use the ↻ on a
-      neighborhood chip to re-download its data.</p>
+      via DataSF · asking-rent benchmarks from Zillow and Apartment List ·
+      precomputed for quick mobile loading.</p>
   </footer>
 
 </main>
