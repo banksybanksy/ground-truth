@@ -20,3 +20,6 @@ data/cache.db-shm
 .vscode/
 .idea/
 *.swp
+
+# --- Cloudflare local deployment state ---
+.wrangler/
