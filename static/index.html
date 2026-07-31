@@ -24,57 +24,42 @@
 
 <main class="wrap">
 
-  <!-- What this data is (and isn't) -->
-  <details class="caveats">
-    <summary>What this data measures — and what it doesn't</summary>
-    <ul>
-      <li><strong>Assessed value is not market price or rent.</strong> California's
-        Prop 13 caps assessed-value growth at ~2%/yr until a property changes hands,
-        so medians here run far below market and move slowly. Use the <em>shape</em>
-        of the trend (and jumps when properties sell), not the dollar level.</li>
-      <li><strong>An eviction notice is not a completed eviction.</strong> These are
-        notices filed with the SF Rent Board. Many are resolved, withdrawn, or never
-        result in a tenant leaving. A notice can also cite more than one reason.</li>
-      <li><strong>The rent benchmark is a separate, external estimate — not a listing.</strong>
-        DataSF has no rent data, so asking-rent figures come from Zillow's rent index
-        and Apartment List (both public). They show a neighborhood's typical rent and
-        trend; per-bedroom figures are estimates, mapped by ZIP, and reflect all home
-        types. Use them to calibrate expectations, not as a quote for any specific unit.</li>
-    </ul>
-  </details>
-
-  <!-- Controls -->
+  <!-- Neighborhood controls -->
   <section class="card controls-card">
-    <div class="controls-row">
-      <div class="hood-picker">
-        <label for="hood-input">Neighborhoods <span class="hint">(compare up to 3)</span></label>
-        <div class="quick-hoods" aria-label="Our neighborhoods">
-          <button type="button" class="quick-hood" data-hood="Portola">Portola</button>
-          <button type="button" class="quick-hood" data-hood="Bernal Heights">Bernal Heights</button>
-          <button type="button" class="quick-hood" data-hood="Marina">Marina</button>
-          <button type="button" class="quick-hood" data-hood="Pacific Heights">Pacific Heights</button>
-          <button type="button" class="quick-hood" data-hood="Twin Peaks">Twin Peaks</button>
-          <button type="button" class="quick-hood" data-hood="West of Twin Peaks">West Portal</button>
-        </div>
-        <div class="hood-input-row">
-          <input id="hood-input" list="hood-options" placeholder="Or type one of the six…" autocomplete="off">
-          <datalist id="hood-options"></datalist>
-          <button id="hood-add" class="btn">Add</button>
-        </div>
-        <div id="hood-chips" class="chips" aria-live="polite"></div>
-        <p class="hood-note">West Portal uses San Francisco’s broader “West of Twin Peaks” reporting area.</p>
+    <div class="hood-picker">
+      <label for="hood-input">Neighborhoods <span class="hint">(compare up to 3)</span></label>
+      <div class="quick-hoods" aria-label="Our neighborhoods">
+        <button type="button" class="quick-hood" data-hood="Portola">Portola</button>
+        <button type="button" class="quick-hood" data-hood="Bernal Heights">Bernal Heights</button>
+        <button type="button" class="quick-hood" data-hood="Marina">Marina</button>
+        <button type="button" class="quick-hood" data-hood="Pacific Heights">Pacific Heights</button>
+        <button type="button" class="quick-hood" data-hood="Twin Peaks">Twin Peaks</button>
+        <button type="button" class="quick-hood" data-hood="West of Twin Peaks">West Portal</button>
       </div>
-      <div class="use-picker">
-        <label id="use-label">Property type <span class="hint">(assessed values)</span></label>
-        <div class="segmented" role="group" aria-labelledby="use-label">
-          <button data-use="res" class="seg active">All residential</button>
-          <button data-use="sfr" class="seg">Single-family</button>
-          <button data-use="mfr" class="seg">Multi-family</button>
-          <button data-use="all" class="seg">All parcels</button>
-        </div>
+      <div class="hood-input-row">
+        <input id="hood-input" list="hood-options" placeholder="Or type one of the six…" autocomplete="off">
+        <datalist id="hood-options"></datalist>
+        <button id="hood-add" class="btn">Add</button>
       </div>
+      <div id="hood-chips" class="chips" aria-live="polite"></div>
+      <p class="hood-note">West Portal uses San Francisco’s broader “West of Twin Peaks” reporting area.</p>
     </div>
     <div id="status" class="status" hidden></div>
+  </section>
+
+  <!-- Rent benchmark — the primary answer -->
+  <section class="card" id="card-rent">
+    <div class="chart-head">
+      <div>
+        <h2>What a rental here runs</h2>
+        <p class="chart-sub">Typical asking rent by neighborhood, with studio through
+          three-bedroom estimates and the recent trend. A useful benchmark, not a live listing.</p>
+      </div>
+    </div>
+    <div id="rent-status" class="status" hidden></div>
+    <div id="rent-panels" class="rent-grid"></div>
+    <div id="rent-metro" class="rent-metro"></div>
+    <p class="chart-note" id="rent-note"></p>
   </section>
 
   <!-- Rent heat map (the pre-search view) -->
@@ -98,25 +83,25 @@
     <div id="map-tip" class="map-tip" hidden></div>
   </section>
 
-  <!-- Summary tiles -->
-  <section id="tiles" class="tiles"></section>
-
-  <!-- Rent benchmark — what to aim for -->
-  <section class="card" id="card-rent">
-    <div class="chart-head">
-      <div>
-        <h2>What a rental here runs — asking-rent benchmark</h2>
-        <p class="chart-sub">Market asking rent from <strong>Zillow's rent index
-          (ZORI)</strong> by ZIP, with bedroom mix from <strong>Apartment List</strong>.
-          This is <em>external</em> to the assessor/eviction data above — and it's a
-          benchmark, not a live listing or a quote.</p>
+  <!-- Secondary property and eviction context -->
+  <section class="card context-controls">
+    <div class="context-heading">
+      <h2>Property and eviction context</h2>
+      <p>Useful background once the rent numbers have done their job.</p>
+    </div>
+    <div class="use-picker">
+      <label id="use-label">Property type <span class="hint">(for assessed values below)</span></label>
+      <div class="segmented" role="group" aria-labelledby="use-label">
+        <button data-use="res" class="seg active">All residential</button>
+        <button data-use="sfr" class="seg">Single-family</button>
+        <button data-use="mfr" class="seg">Multi-family</button>
+        <button data-use="all" class="seg">All parcels</button>
       </div>
     </div>
-    <div id="rent-status" class="status" hidden></div>
-    <div id="rent-panels" class="rent-grid"></div>
-    <div id="rent-metro" class="rent-metro"></div>
-    <p class="chart-note" id="rent-note"></p>
   </section>
+
+  <!-- Summary tiles -->
+  <section id="tiles" class="tiles"></section>
 
   <!-- Charts -->
   <section class="card chart-card" id="card-values">
@@ -159,6 +144,25 @@
     <div class="plot plot-tall"><canvas id="chart-reasons"></canvas></div>
     <div class="table-view" id="table-reasons" hidden></div>
   </section>
+
+  <!-- What this data is (and isn't) -->
+  <details class="caveats">
+    <summary>What this data measures — and what it doesn't</summary>
+    <ul>
+      <li><strong>Assessed value is not market price or rent.</strong> California's
+        Prop 13 caps assessed-value growth at ~2%/yr until a property changes hands,
+        so medians here run far below market and move slowly. Use the <em>shape</em>
+        of the trend (and jumps when properties sell), not the dollar level.</li>
+      <li><strong>An eviction notice is not a completed eviction.</strong> These are
+        notices filed with the SF Rent Board. Many are resolved, withdrawn, or never
+        result in a tenant leaving. A notice can also cite more than one reason.</li>
+      <li><strong>The rent benchmark is a separate, external estimate — not a listing.</strong>
+        DataSF has no rent data, so asking-rent figures come from Zillow's rent index
+        and Apartment List (both public). They show a neighborhood's typical rent and
+        trend; per-bedroom figures are estimates, mapped by ZIP, and reflect all home
+        types. Use them to calibrate expectations, not as a quote for any specific unit.</li>
+    </ul>
+  </details>
 
   <footer class="footer">
     <p>Data: <a href="https://data.sfgov.org/Housing-and-Buildings/Assessor-Historical-Secured-Property-Tax-Rolls/wv5m-vpq2" target="_blank" rel="noopener">Assessor Historical Secured Property Tax Rolls</a>
