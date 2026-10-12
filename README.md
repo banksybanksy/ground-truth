@@ -32,6 +32,8 @@ To refresh the data (needs network access to DataSF, Zillow, Apartment List, and
 python3 export_static.py     # caches raw rows in data/cache.db, rewrites static/data/
 ```
 
+The exporter reuses anything already in `data/cache.db`. Delete that file to pull everything fresh.
+
 Optional variables (see `.env.example`): `CENSUS_API_KEY` adds measured citywide rent by bedroom from the Census ACS, and `SODA_APP_TOKEN` raises the DataSF rate limit.
 
 Tests and lint:
@@ -40,8 +42,6 @@ Tests and lint:
 python3 -m unittest discover -s tests
 ruff check .                 # optional; CI runs it
 ```
-
-Run directly, `server.py` also exposes the live JSON API the earlier version used (`/api/trends`, `/api/rent`, `/api/rentmap`, `/api/lookup`, and refresh endpoints). The current page doesn't call it.
 
 ## Data sources
 

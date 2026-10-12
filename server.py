@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Ground Truth: data fetching, aggregation, and a local server.
+Ground Truth: data fetching and aggregation, plus a local static server.
 
-Python stdlib only (http.server, sqlite3, urllib). export_static.py imports
-the fetch and aggregation functions here to write static/data/. Run directly,
-this serves static/ plus a JSON API backed by a local SQLite cache of two
-DataSF datasets and a market-rent benchmark:
+Python stdlib only (http.server, sqlite3, urllib). export_static.py calls the
+functions here to build static/data/ from a local SQLite cache of two DataSF
+datasets and a market-rent benchmark:
 
   - Assessor Historical Secured Property Tax Rolls (wv5m-vpq2), roll years 2007-2025
   - Eviction Notices (5cei-gny5), 1997-present
@@ -13,8 +12,9 @@ DataSF datasets and a market-rent benchmark:
     (SF-metro bedroom mix); optional Census ACS citywide medians if a free
     CENSUS_API_KEY is set. This is EXTERNAL to DataSF, which has no rent data.
 
-Data is fetched on demand (SODA $where filters, paged; rent CSVs downloaded
-once), cached in ./data/cache.db, and re-fetched only on explicit refresh.
+Each source is fetched once (SODA $where filters, paged; rent CSVs downloaded
+whole) and cached in ./data/cache.db. Delete that file to fetch fresh data.
+Run directly, this module serves static/ on localhost.
 """
 
 import csv
@@ -31,7 +31,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import date, datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -136,23 +136,18 @@ HOOD_ZIPS = {
     "Presidio": ["94129"],
 }
 
-# Every SF ZIP we track (union of the crosswalk), used for the rent heat map,
-# ZIP validation, and boundary fetch. 94111 rides with FiDi in the crosswalk.
+# Every SF ZIP we track (union of the crosswalk), used for the rent heat map
+# and the boundary fetch. 94111 rides with FiDi in the crosswalk.
 SF_ZIPS = sorted({z for zips in HOOD_ZIPS.values() for z in zips})
-ZIP_RE = re.compile(r"^94\d{3}$")
 
 # ZIP polygon source: Census TIGERweb ZCTA layer (public, no key, GeoJSON out).
 TIGER_ZCTA_URL = ("https://tigerweb.geo.census.gov/arcgis/rest/services/"
                   "TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/4/query")
 
 
-def is_zip(name):
-    return bool(ZIP_RE.match(name or ""))
-
 # ---------------------------------------------------------------------------
 # Database
 
-_db_init_lock = threading.Lock()
 _db_initialized = False
 
 
@@ -164,63 +159,62 @@ def db():
 
 def init_db():
     global _db_initialized
-    with _db_init_lock:
-        if _db_initialized:
-            return
-        os.makedirs(DATA_DIR, exist_ok=True)
-        conn = db()
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS parcel_values (
-                hood TEXT NOT NULL,
-                year INTEGER NOT NULL,
-                use_code TEXT,
-                value REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_pv_hood ON parcel_values(hood);
-            CREATE TABLE IF NOT EXISTS evictions (
-                hood TEXT NOT NULL,
-                year INTEGER NOT NULL,
-                reasons TEXT NOT NULL DEFAULT ''
-            );
-            CREATE INDEX IF NOT EXISTS idx_ev_hood ON evictions(hood);
-            CREATE TABLE IF NOT EXISTS hood_meta (
-                hood TEXT PRIMARY KEY,
-                assessor_rows INTEGER,
-                eviction_rows INTEGER,
-                fetched_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS hood_list (
-                hood TEXT PRIMARY KEY,
-                assessor_rows INTEGER,
-                eviction_rows INTEGER,
-                listed_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS rent_zip (
-                zip TEXT PRIMARY KEY,
-                latest REAL,
-                yoy REAL,
-                series TEXT,          -- JSON [[month, value], ...] trimmed
-                asof TEXT
-            );
-            CREATE TABLE IF NOT EXISTS rent_metro (
-                bed TEXT PRIMARY KEY,  -- overall | br1 | br2
-                value REAL,
-                asof TEXT
-            );
-            CREATE TABLE IF NOT EXISTS rent_meta (
-                k TEXT PRIMARY KEY,
-                v TEXT
-            );
-            CREATE TABLE IF NOT EXISTS zip_geo (
-                zip TEXT PRIMARY KEY,
-                geometry TEXT NOT NULL   -- GeoJSON geometry, 4-decimal precision
-            );
-            """
-        )
-        conn.commit()
-        conn.close()
-        _db_initialized = True
+    if _db_initialized:
+        return
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = db()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS parcel_values (
+            hood TEXT NOT NULL,
+            year INTEGER NOT NULL,
+            use_code TEXT,
+            value REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pv_hood ON parcel_values(hood);
+        CREATE TABLE IF NOT EXISTS evictions (
+            hood TEXT NOT NULL,
+            year INTEGER NOT NULL,
+            reasons TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_ev_hood ON evictions(hood);
+        CREATE TABLE IF NOT EXISTS hood_meta (
+            hood TEXT PRIMARY KEY,
+            assessor_rows INTEGER,
+            eviction_rows INTEGER,
+            fetched_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS hood_list (
+            hood TEXT PRIMARY KEY,
+            assessor_rows INTEGER,
+            eviction_rows INTEGER,
+            listed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS rent_zip (
+            zip TEXT PRIMARY KEY,
+            latest REAL,
+            yoy REAL,
+            series TEXT,          -- JSON [[month, value], ...] trimmed
+            asof TEXT
+        );
+        CREATE TABLE IF NOT EXISTS rent_metro (
+            bed TEXT PRIMARY KEY,  -- overall | br1 | br2
+            value REAL,
+            asof TEXT
+        );
+        CREATE TABLE IF NOT EXISTS rent_meta (
+            k TEXT PRIMARY KEY,
+            v TEXT
+        );
+        CREATE TABLE IF NOT EXISTS zip_geo (
+            zip TEXT PRIMARY KEY,
+            geometry TEXT NOT NULL   -- GeoJSON geometry, 4-decimal precision
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+    _db_initialized = True
 
 
 # ---------------------------------------------------------------------------
@@ -246,13 +240,13 @@ def soda_get(url, params):
 # ---------------------------------------------------------------------------
 # Neighborhood list (both datasets use SF "Analysis Neighborhoods" names)
 
-def get_hood_list(force=False):
+def get_hood_list():
     conn = db()
     try:
         rows = conn.execute(
             "SELECT hood, assessor_rows, eviction_rows FROM hood_list ORDER BY hood"
         ).fetchall()
-        if rows and not force:
+        if rows:
             cached = {h: [a or 0, e or 0] for h, a, e in rows}
         else:
             assessor = soda_get(ASSESSOR_URL, {
@@ -301,27 +295,6 @@ def get_hood_list(force=False):
 # ---------------------------------------------------------------------------
 # Per-neighborhood fetch + cache
 
-_progress = {}          # hood -> {"phase": str, "fetched": int, "total": int}
-_progress_lock = threading.Lock()
-_hood_locks = {}
-_hood_locks_lock = threading.Lock()
-
-
-def _set_progress(hood, phase, fetched=0, total=0):
-    with _progress_lock:
-        _progress[hood] = {"phase": phase, "fetched": fetched, "total": total}
-
-
-def get_progress(hood):
-    with _progress_lock:
-        return dict(_progress.get(hood, {"phase": "idle", "fetched": 0, "total": 0}))
-
-
-def _hood_lock(hood):
-    with _hood_locks_lock:
-        return _hood_locks.setdefault(hood, threading.Lock())
-
-
 def is_cached(hood):
     conn = db()
     try:
@@ -333,112 +306,73 @@ def is_cached(hood):
         conn.close()
 
 
-def _expected_rows(hood):
-    conn = db()
-    try:
-        row = conn.execute(
-            "SELECT assessor_rows FROM hood_list WHERE hood=?", (hood,)
-        ).fetchone()
-        return row[0] if row else 0
-    finally:
-        conn.close()
-
-
 def fetch_hood(hood):
     """Download and cache one neighborhood (assessor value rows + eviction notices)."""
-    with _hood_lock(hood):
-        if is_cached(hood):
-            _set_progress(hood, "done")
-            return
+    quoted = hood.replace("'", "''")
 
-        expected = _expected_rows(hood)
-        _set_progress(hood, "assessor", 0, expected)
+    # Assessor: slim per-parcel rows, with the total value computed by DataSF.
+    value_rows = []
+    offset = 0
+    while True:
+        page = soda_get(ASSESSOR_URL, {
+            "$select": ("closed_roll_year as y, use_code as u, "
+                        "(assessed_land_value + assessed_improvement_value + "
+                        "assessed_fixtures_value) as v"),
+            "$where": f"analysis_neighborhood = '{quoted}'",
+            "$order": "row_id",
+            "$limit": SODA_PAGE_SIZE,
+            "$offset": offset,
+        })
+        for r in page:
+            try:
+                year = int(r["y"])
+                val = float(r.get("v") or 0)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if val > 0:
+                value_rows.append((hood, year, r.get("u") or "", val))
+        offset += len(page)
+        if len(page) < SODA_PAGE_SIZE:
+            break
 
-        # --- Assessor: slim per-parcel rows; total value computed server-side.
-        # (ZIP selections skip this — the assessor roll has no ZIP column, so
-        # ZIPs get evictions + exact rent, and the UI says values are n/a.)
-        value_rows = []
-        offset = 0
-        while not is_zip(hood):
-            page = soda_get(ASSESSOR_URL, {
-                "$select": ("closed_roll_year as y, use_code as u, "
-                            "(assessed_land_value + assessed_improvement_value + "
-                            "assessed_fixtures_value) as v"),
-                "$where": f"analysis_neighborhood = '{hood.replace(chr(39), chr(39)*2)}'",
-                "$order": "row_id",
-                "$limit": SODA_PAGE_SIZE,
-                "$offset": offset,
-            })
-            for r in page:
-                try:
-                    year = int(r["y"])
-                    val = float(r.get("v") or 0)
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if val > 0:
-                    value_rows.append((hood, year, r.get("u") or "", val))
-            offset += len(page)
-            _set_progress(hood, "assessor", offset, max(expected, offset))
-            if len(page) < SODA_PAGE_SIZE:
-                break
+    # Evictions: one page is plenty (the largest neighborhood has ~5.5k notices).
+    evict_rows = []
+    offset = 0
+    reason_keys = list(EVICTION_REASONS.keys())
+    while True:
+        page = soda_get(EVICTIONS_URL, {
+            "$select": "file_date, " + ", ".join(reason_keys),
+            "$where": f"neighborhood = '{quoted}'",
+            "$order": ":id",
+            "$limit": SODA_PAGE_SIZE,
+            "$offset": offset,
+        })
+        for r in page:
+            fd = r.get("file_date") or ""
+            try:
+                year = int(fd[:4])
+            except ValueError:
+                continue
+            reasons = ",".join(k for k in reason_keys if r.get(k) is True)
+            evict_rows.append((hood, year, reasons))
+        offset += len(page)
+        if len(page) < SODA_PAGE_SIZE:
+            break
 
-        # --- Evictions: one page is plenty (largest neighborhood ~5.5k notices).
-        _set_progress(hood, "evictions", 0, 0)
-        evict_rows = []
-        offset = 0
-        reason_keys = list(EVICTION_REASONS.keys())
-        ev_where = (f"zip = '{hood}'" if is_zip(hood)
-                    else f"neighborhood = '{hood.replace(chr(39), chr(39)*2)}'")
-        while True:
-            page = soda_get(EVICTIONS_URL, {
-                "$select": "file_date, " + ", ".join(reason_keys),
-                "$where": ev_where,
-                "$order": ":id",
-                "$limit": SODA_PAGE_SIZE,
-                "$offset": offset,
-            })
-            for r in page:
-                fd = r.get("file_date") or ""
-                if len(fd) < 4:
-                    continue
-                try:
-                    year = int(fd[:4])
-                except ValueError:
-                    continue
-                reasons = ",".join(k for k in reason_keys if r.get(k) is True)
-                evict_rows.append((hood, year, reasons))
-            offset += len(page)
-            if len(page) < SODA_PAGE_SIZE:
-                break
-
-        # --- Store atomically.
-        conn = db()
-        try:
-            with conn:
-                conn.execute("DELETE FROM parcel_values WHERE hood=?", (hood,))
-                conn.execute("DELETE FROM evictions WHERE hood=?", (hood,))
-                conn.executemany(
-                    "INSERT INTO parcel_values VALUES (?,?,?,?)", value_rows)
-                conn.executemany("INSERT INTO evictions VALUES (?,?,?)", evict_rows)
-                conn.execute(
-                    "INSERT OR REPLACE INTO hood_meta VALUES (?,?,?,?)",
-                    (hood, len(value_rows), len(evict_rows),
-                     datetime.now(timezone.utc).isoformat()),
-                )
-        finally:
-            conn.close()
-        _set_progress(hood, "done")
-
-
-def refresh_hood(hood):
     conn = db()
     try:
         with conn:
-            conn.execute("DELETE FROM hood_meta WHERE hood=?", (hood,))
+            conn.execute("DELETE FROM parcel_values WHERE hood=?", (hood,))
+            conn.execute("DELETE FROM evictions WHERE hood=?", (hood,))
+            conn.executemany("INSERT INTO parcel_values VALUES (?,?,?,?)", value_rows)
+            conn.executemany("INSERT INTO evictions VALUES (?,?,?)", evict_rows)
+            conn.execute(
+                "INSERT OR REPLACE INTO hood_meta VALUES (?,?,?,?)",
+                (hood, len(value_rows), len(evict_rows),
+                 datetime.now(timezone.utc).isoformat()),
+            )
     finally:
         conn.close()
-    _set_progress(hood, "idle")
-    fetch_hood(hood)
 
 
 # ---------------------------------------------------------------------------
@@ -513,9 +447,6 @@ def hood_trends(hood, use_filter):
 
 # ---------------------------------------------------------------------------
 # Rent benchmark (market asking rent — external to the DataSF datasets)
-
-_rent_lock = threading.Lock()
-
 
 def _http_text(url, timeout=120):
     req = urllib.request.Request(url, headers={
@@ -597,22 +528,21 @@ def _store_rent(zori, metro):
         conn.close()
 
 
-def ensure_rent(force=False):
-    """Populate the rent cache if empty (or forced). Cheap no-op afterward."""
-    with _rent_lock:
-        conn = db()
-        try:
-            have = conn.execute("SELECT count(*) FROM rent_zip").fetchone()[0]
-        finally:
-            conn.close()
-        if have and not force:
-            return
-        zori = _fetch_zori()
-        try:
-            metro = _fetch_apartment_list_metro()
-        except Exception:  # noqa: BLE001 — bedroom ratio is optional garnish
-            metro = {}
-        _store_rent(zori, metro)
+def ensure_rent():
+    """Populate the rent cache if it's empty. Cheap no-op afterward."""
+    conn = db()
+    try:
+        have = conn.execute("SELECT count(*) FROM rent_zip").fetchone()[0]
+    finally:
+        conn.close()
+    if have:
+        return
+    zori = _fetch_zori()
+    try:
+        metro = _fetch_apartment_list_metro()
+    except Exception:  # noqa: BLE001 — without it, typical bedroom ratios apply
+        metro = {}
+    _store_rent(zori, metro)
 
 
 def census_citywide():
@@ -687,10 +617,8 @@ def rent_benchmark(hoods):
 
     result = {}
     for hood in hoods:
-        wanted = [hood] if is_zip(hood) else HOOD_ZIPS.get(hood, [])
-        zips = [z for z in wanted if z in zrows]
-        entry = {"available": bool(zips), "zips": zips, "asof": asof,
-                 "exact": is_zip(hood), "measured": False}
+        zips = [z for z in HOOD_ZIPS.get(hood, []) if z in zrows]
+        entry = {"available": bool(zips), "zips": zips, "asof": asof}
         if not zips:
             result[hood] = entry
             continue
@@ -776,206 +704,19 @@ def rent_map():
     return {"features": feats, "asof": asof[0] if asof else None}
 
 
-def refresh_rent():
-    ensure_rent(force=True)
-    conn = db()
-    try:
-        with conn:
-            conn.execute("DELETE FROM rent_meta WHERE k='city_acs'")
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
-# Address / parcel lookup (live SODA query, no caching — results are small)
+# Local static server
 
-def clean_location(loc):
-    """Tidy raw roll locations like '0000 1380 GREENWICH           ST2650'
-    into '1380 GREENWICH ST #2650'. Format is: from-number, to-number,
-    street name, then suffix with a 4-digit unit glued on."""
-    s = re.sub(r"\s+", " ", (loc or "")).strip()
-    m = re.match(r"^(\d{1,5}) (\d{1,5}) (.+?)([A-Z]{2})?(\d{4})?$", s)
-    if not m:
-        return s
-    hi, lo, name, suffix, unit = m.groups()
-    hi, lo = int(hi), int(lo)
-    if hi and lo and hi != lo:
-        nums = f"{min(hi, lo)}–{max(hi, lo)}"
-    else:
-        nums = str(hi or lo or "").strip()
-    out = f"{nums} {name.strip()}".strip()
-    if suffix:
-        out += f" {suffix}"
-    if unit and int(unit) > 0:
-        out += f" #{int(unit)}"
-    return out
-
-
-def lookup(query):
-    q = query.strip().upper()
-    if not q:
-        return {"parcels": []}
-    compact = re.sub(r"[\s/-]", "", q)
-    if re.fullmatch(r"[0-9]{4,5}[0-9A-Z]{0,4}", compact):
-        where = f"starts_with(parcel_number, '{compact}')"
-    else:
-        safe = q.replace("'", "''")
-        where = f"upper(property_location) like '%{safe}%'"
-    rows = soda_get(ASSESSOR_URL, {
-        "$select": ("parcel_number, closed_roll_year as y, property_location, "
-                    "use_definition, number_of_units, year_property_built, "
-                    "(assessed_land_value + assessed_improvement_value + "
-                    "assessed_fixtures_value) as v, analysis_neighborhood"),
-        "$where": where,
-        "$order": "parcel_number, closed_roll_year",
-        "$limit": 1500,
-    })
-    parcels = {}
-    for r in rows:
-        pn = r.get("parcel_number")
-        if not pn:
-            continue
-        p = parcels.setdefault(pn, {
-            "parcel_number": pn, "location": "", "use": "", "units": None,
-            "built": None, "neighborhood": "", "history": [],
-        })
-        try:
-            year = int(r["y"])
-            val = float(r.get("v") or 0)
-        except (KeyError, ValueError, TypeError):
-            continue
-        p["history"].append({"year": year, "value": round(val)})
-        # keep metadata from the latest roll year
-        p["location"] = clean_location(r.get("property_location")) or p["location"]
-        p["use"] = r.get("use_definition") or p["use"]
-        p["neighborhood"] = r.get("analysis_neighborhood") or p["neighborhood"]
-        u = r.get("number_of_units")
-        b = r.get("year_property_built")
-        p["units"] = int(float(u)) if u not in (None, "") else p["units"]
-        yb = int(float(b)) if b not in (None, "") else 0
-        p["built"] = yb if yb > 1000 else p["built"]
-    out = list(parcels.values())[:20]
-    for p in out:
-        p["history"].sort(key=lambda h: h["year"])
-    truncated = len(parcels) > 20 or len(rows) >= 1500
-    return {"parcels": out, "truncated": truncated}
-
-
-# ---------------------------------------------------------------------------
-# HTTP handler
-
-MIME = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".ico": "image/x-icon",
-}
-
-
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=STATIC_DIR, **kwargs)
 
     def log_message(self, fmt, *args):
-        # quiet by default; enable with VERBOSE=1
         if os.environ.get("VERBOSE"):
             super().log_message(fmt, *args)
 
-    def _json(self, obj, status=200):
-        body = json.dumps(obj).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _error(self, msg, status=500):
-        self._json({"error": msg}, status)
-
-    def _static(self, path):
-        if path == "/":
-            path = "/index.html"
-        fs_path = os.path.normpath(os.path.join(STATIC_DIR, path.lstrip("/")))
-        if not fs_path.startswith(STATIC_DIR) or not os.path.isfile(fs_path):
-            self._error("not found", 404)
-            return
-        ext = os.path.splitext(fs_path)[1]
-        with open(fs_path, "rb") as f:
-            body = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", MIME.get(ext, "application/octet-stream"))
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        qs = urllib.parse.parse_qs(parsed.query)
-        route = parsed.path
-        try:
-            if route == "/api/neighborhoods":
-                self._json({"neighborhoods": get_hood_list()})
-            elif route == "/api/progress":
-                hood = (qs.get("hood") or [""])[0]
-                self._json(get_progress(hood))
-            elif route == "/api/trends":
-                hoods = [h for h in (qs.get("hoods") or [""])[0].split("|") if h][:3]
-                use = (qs.get("use") or ["res"])[0]
-                if use not in USE_FILTERS:
-                    return self._error("bad use filter", 400)
-                result = {}
-                for hood in hoods:
-                    if not is_cached(hood):
-                        fetch_hood(hood)
-                    result[hood] = hood_trends(hood, use)
-                self._json({"use": use, "hoods": result,
-                            "current_year": CURRENT_YEAR})
-            elif route == "/api/rent":
-                hoods = [h for h in (qs.get("hoods") or [""])[0].split("|") if h][:3]
-                self._json(rent_benchmark(hoods))
-            elif route == "/api/rentmap":
-                self._json(rent_map())
-            elif route == "/api/lookup":
-                q = (qs.get("q") or [""])[0]
-                self._json(lookup(q))
-            elif route.startswith("/api/"):
-                self._error("not found", 404)
-            else:
-                self._static(route)
-        except RuntimeError as e:
-            self._error(str(e), 502)
-        except Exception as e:  # noqa: BLE001 — surface anything to the UI
-            self._error(f"{type(e).__name__}: {e}", 500)
-
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        qs = urllib.parse.parse_qs(parsed.query)
-        try:
-            if parsed.path == "/api/refresh":
-                hood = (qs.get("hood") or [""])[0]
-                if not hood:
-                    return self._error("hood required", 400)
-                refresh_hood(hood)
-                self._json({"ok": True})
-            elif parsed.path == "/api/refresh_list":
-                get_hood_list(force=True)
-                self._json({"ok": True})
-            elif parsed.path == "/api/refresh_rent":
-                refresh_rent()
-                self._json({"ok": True})
-            else:
-                self._error("not found", 404)
-        except RuntimeError as e:
-            self._error(str(e), 502)
-        except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
-
 
 def main():
-    init_db()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
     print(f"Ground Truth → {url}")
