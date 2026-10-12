@@ -1,11 +1,14 @@
 """Aggregation and export tests. Each test builds a small SQLite cache in a
 temp directory, so nothing touches the network or the real data/cache.db."""
 
+import http.client
 import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -167,3 +170,55 @@ class ExportTest(CacheTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FetchHoodTest(CacheTestCase):
+    def test_apostrophes_are_escaped_in_the_where_clauses(self):
+        seen = []
+
+        def fake_soda_get(url, params):
+            seen.append(params["$where"])
+            return []
+
+        with mock.patch.object(server, "soda_get", fake_soda_get):
+            server.fetch_hood("Hunter's Point")
+        # One query per source, each with the quote doubled so the filter stays a single string.
+        self.assertEqual(seen, ["analysis_neighborhood = 'Hunter''s Point'",
+                                "neighborhood = 'Hunter''s Point'"])
+
+
+class StaticServerTest(unittest.TestCase):
+    """Boots the real handler, rooted at the real static/ folder, on a free port."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", path)
+            res = conn.getresponse()
+            return res.status, res.read()
+        finally:
+            conn.close()
+
+    def test_serves_the_page_and_its_data(self):
+        status, body = self.get("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"<title>Ground Truth", body)
+        status, body = self.get("/data/rent.json")
+        self.assertEqual(status, 200)
+        json.loads(body)
+
+    def test_missing_files_and_path_traversal_are_404(self):
+        self.assertEqual(self.get("/nope.html")[0], 404)
+        self.assertEqual(self.get("/../server.py")[0], 404)
+        self.assertEqual(self.get("/%2e%2e/server.py")[0], 404)

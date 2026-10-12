@@ -8,6 +8,26 @@ A small dashboard for one apartment-hunting question: is the rent in this San Fr
 
 For each neighborhood the page shows an asking-rent estimate by bedroom count with its recent trend, a citywide ZIP heat map that outlines the ZIPs the neighborhood is matched to, the median assessed value per parcel from 2007 to 2025, eviction notices filed per year since 1997, and notices by stated reason. Each of those three charts can switch to a table.
 
+## Run it locally
+
+Needs Python 3.9 or newer and nothing else (standard library only; macOS and Linux ship `python3`, or `brew install python`).
+
+```bash
+git clone https://github.com/banksybanksy/ground-truth.git
+cd ground-truth
+python3 server.py            # serves static/ at http://127.0.0.1:8000 and opens a browser tab
+```
+
+Change the port or skip the browser tab with `PORT=9000 NO_BROWSER=1 python3 server.py`. The page reads the committed JSON in `static/data/`, so it works offline.
+
+If you would rather not run the script, any static file server works, as long as it is rooted at `static/` (the page uses absolute `/` paths):
+
+```bash
+python3 -m http.server 8000 --bind 127.0.0.1 --directory static
+```
+
+Both bind to `127.0.0.1` only, so the page is visible on your machine and nowhere else on the network.
+
 ## How it works
 
 **Six neighborhoods are exported ahead of time instead of queried live.** `export_static.py` fetches each neighborhood once, aggregates it, and writes the small JSON files in `static/data/`. The page only reads those files, so it loads quickly and works from any static file server. An earlier version ran citywide live queries, where the first look at a large neighborhood took up to 90 seconds.
@@ -16,27 +36,20 @@ For each neighborhood the page shows an asking-rent estimate by bedroom count wi
 
 **Sources keep their own meanings.** Assessed value is not market price, an eviction notice is not a completed eviction, and a per-bedroom rent here is an estimate, not a measurement. The data is labeled that way in the UI rather than blended into one score. A neighborhood with no rent-index coverage reads as "no benchmark", not as zero. The Apartment List CSV URL changes every month, so the exporter finds the current link on their data page instead of hardcoding it.
 
-## Running it
+## Refreshing the data
 
-Python 3.9 or newer, standard library only:
-
-```bash
-python3 server.py            # serves static/ at http://127.0.0.1:8000
-```
-
-`NO_BROWSER=1` stops it opening a browser tab, and `PORT` changes the port. The page reads the committed JSON, so this works offline.
-
-To refresh the data (needs network access to DataSF, Zillow, Apartment List, and Census TIGERweb):
+The committed data is a snapshot. To refresh it you need network access to DataSF, Zillow, Apartment List and Census TIGERweb:
 
 ```bash
+rm -f data/cache.db          # optional: forget the cache and pull everything fresh
 python3 export_static.py     # caches raw rows in data/cache.db, rewrites static/data/
 ```
 
-The exporter reuses anything already in `data/cache.db`. Delete that file to pull everything fresh.
+The exporter reuses anything already in `data/cache.db`.
 
-Optional variables (see `.env.example`): `CENSUS_API_KEY` adds measured citywide rent by bedroom from the Census ACS, and `SODA_APP_TOKEN` raises the DataSF rate limit.
+Optional variables (listed in `.env.example`; nothing reads that file automatically, so export them or put them in front of the command, as in `CENSUS_API_KEY=... python3 export_static.py`): `CENSUS_API_KEY` adds measured citywide rent by bedroom from the Census ACS, and `SODA_APP_TOKEN` raises the DataSF rate limit.
 
-Tests and lint:
+## Tests and lint
 
 ```bash
 python3 -m unittest discover -s tests
