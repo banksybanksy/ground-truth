@@ -1,5 +1,7 @@
 # Ground Truth
 
+[![CI](https://github.com/banksybanksy/ground-truth/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/banksybanksy/ground-truth/actions/workflows/ci.yml)
+
 A small dashboard for one apartment-hunting question: is the rent in this San Francisco neighborhood high or low for the city, is it climbing, and what does the property and eviction history look like? It compares up to three of six neighborhoods (Portola, Bernal Heights, Marina, Pacific Heights, Twin Peaks, West Portal) using public data that otherwise lives in sources that don't line up.
 
 ![Rent benchmark for Portola and Marina](docs/screenshots/dashboard.png)
