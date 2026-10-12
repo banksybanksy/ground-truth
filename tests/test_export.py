@@ -118,7 +118,6 @@ class RentBenchmarkTest(CacheTestCase):
         out = server.rent_benchmark(["Portola", "Bernal Heights"])
         self.assertEqual(out["hoods"]["Portola"], {
             "available": False, "zips": [], "asof": "2026-05-01",
-            "exact": False, "measured": False,
         })
         self.assertIsNone(out["hoods"]["Bernal Heights"]["yoy"])
         self.assertFalse(out["measured_available"])

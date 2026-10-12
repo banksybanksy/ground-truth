@@ -9,7 +9,7 @@ data/cache.db-wal
 data/cache.db-shm
 
 # --- Secrets / local environment ---
-# The .claude launch config holds a real Census API key. Never commit it.
+# These can hold API keys. Never commit them.
 .env
 .env.*
 !.env.example

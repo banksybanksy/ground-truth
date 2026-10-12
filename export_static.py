@@ -31,16 +31,9 @@ def main():
     server.init_db()
     output = os.path.join(server.STATIC_DIR, "data")
 
-    neighborhoods = [
-        hood for hood in server.get_hood_list()
-        if hood["name"] in FEATURED_HOODS
-    ]
-    write_json(os.path.join(output, "neighborhoods.json"), {
-        "neighborhoods": neighborhoods,
-    })
-
     for hood in FEATURED_HOODS:
         if not server.is_cached(hood):
+            print(f"Fetching {hood} from DataSF…")
             server.fetch_hood(hood)
         for use_filter in server.USE_FILTERS:
             write_json(
@@ -48,6 +41,14 @@ def main():
                 server.hood_trends(hood, use_filter),
             )
 
+    # Written after the fetches so each entry's fetched_at is current.
+    neighborhoods = [
+        hood for hood in server.get_hood_list()
+        if hood["name"] in FEATURED_HOODS
+    ]
+    write_json(os.path.join(output, "neighborhoods.json"), {
+        "neighborhoods": neighborhoods,
+    })
     write_json(os.path.join(output, "rent.json"), server.rent_benchmark(FEATURED_HOODS))
     write_json(os.path.join(output, "rentmap.json"), server.rent_map())
     print(f"Static data written to {output}")

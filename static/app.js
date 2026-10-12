@@ -566,7 +566,7 @@ function renderRent() {
     // overall + YoY
     const overall = el("div", "rent-overall");
     overall.append(el("span", null,
-      `Typical asking rent, all sizes${e.exact ? " (this exact ZIP)" : ""}: ${fmtMoneyFull(e.overall)}/mo`));
+      `Typical asking rent, all sizes: ${fmtMoneyFull(e.overall)}/mo`));
     if (e.yoy != null) {
       const up = e.yoy >= 0;
       overall.append(document.createTextNode(" · "));
