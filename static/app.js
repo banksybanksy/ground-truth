@@ -25,6 +25,7 @@ const state = {
 };
 
 const ZIP_RE = /^94\d{3}$/;
+const PICK_PROMPT = "Pick up to three neighborhoods. Their public data is already packed in, so comparisons load right away.";
 const FEATURED_HOODS = [
   { name: "Portola", label: "Portola" },
   { name: "Bernal Heights", label: "Bernal Heights" },
@@ -51,6 +52,18 @@ function hoodSlug(name) {
 }
 
 const $ = (sel) => document.querySelector(sel);
+
+// Fetch precomputed JSON. Check the status before parsing, so a missing file
+// (often served as an HTML page) reads as "HTTP 404" rather than a JSON error.
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`${url} didn't return JSON`);
+  }
+}
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -161,9 +174,7 @@ function hideStatus() {
 // Neighborhood picker
 
 async function loadHoodList() {
-  const res = await fetch("/data/neighborhoods.json");
-  if (!res.ok) throw new Error((await res.json()).error || "failed to load neighborhoods");
-  state.allHoods = (await res.json()).neighborhoods
+  state.allHoods = (await getJSON("/data/neighborhoods.json")).neighborhoods
     .filter((h) => FEATURED_HOODS.some((featured) => featured.name === h.name));
   rebuildDatalist();
 }
@@ -264,10 +275,7 @@ async function loadMap() {
   status.hidden = false;
   status.textContent = "Loading the rent map (boundaries come from the Census, once)…";
   try {
-    const res = await fetch("/data/rentmap.json");
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    state.map = body;
+    state.map = await getJSON("/data/rentmap.json");
     status.hidden = true;
     renderMap();
     rebuildDatalist();
@@ -312,6 +320,7 @@ function renderMap() {
   state.mapShapes = {};
 
   const labelLayer = document.createElementNS(svg.namespaceURI, "g");
+  const placed = []; // label centers already drawn, to avoid overlaps downtown
   for (const f of feats) {
     let d = "";
     let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
@@ -353,10 +362,12 @@ function renderMap() {
 
     // label the polygons big enough to hold text (ink picked by fill depth);
     // the cramped downtown cluster falls back to tooltips
-    if (has && bx1 - bx0 > 74 && by1 - by0 > 42) {
+    const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+    const clear = placed.every(([x, y]) => Math.abs(x - cx) > 44 || Math.abs(y - cy) > 36);
+    if (has && clear && bx1 - bx0 > 74 && by1 - by0 > 42) {
+      placed.push([cx, cy]);
       const t = (f.value - vMin) / (vMax - vMin || 1);
       const ink = t > 0.55 ? "#ffffff" : "#0d366b";
-      const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
       const label = document.createElementNS(svg.namespaceURI, "text");
       label.classList.add("zip-label");
       label.setAttribute("x", cx); label.setAttribute("y", cy - 2);
@@ -428,17 +439,14 @@ async function updateTrends() {
   if (!names.length) {
     state.data = null;
     stopPolling();
-    showStatus("Type a neighborhood or ZIP above — or click a ZIP on the map below.");
+    showStatus(PICK_PROMPT);
     renderAll();
     return;
   }
   showStatus("Loading…");
   try {
     const rows = await Promise.all(names.map(async (name) => {
-      const res = await fetch(`/data/trends/${hoodSlug(name)}-${state.use}.json`);
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      return [name, body];
+      return [name, await getJSON(`/data/trends/${hoodSlug(name)}-${state.use}.json`)];
     }));
     if (token !== state.requestToken) return; // superseded by a newer request
     state.data = Object.fromEntries(rows);
@@ -468,10 +476,8 @@ async function loadRent(names) {
   status.classList.remove("error");
   status.textContent = "Loading rent index…";
   try {
-    const res = await fetch("/data/rent.json");
-    const body = await res.json();
+    const body = await getJSON("/data/rent.json");
     if (token !== state.rentToken) return;
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     state.rent = body;
     status.hidden = true;
     renderRent();
@@ -671,6 +677,9 @@ function renderRent() {
       const canvas = document.createElement("canvas");
       wrap.append(canvas);
       panel.append(wrap);
+      const month = (p) => new Date(p.month + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      panel.append(el("div", "spark-range",
+        `${month(e.series[0])} – ${month(e.series[e.series.length - 1])}`));
       box.append(panel);
       state.rentCharts[s.name] = new Chart(canvas, {
         type: "line",
@@ -736,8 +745,8 @@ function renderRent() {
       "Couldn't reach the Census API for measured medians — the estimates above are unaffected."));
   } else if (!rent.measured_available) {
     metroBox.append(el("span", "census-hint",
-      "Per-bedroom figures are estimates (neighborhood rent × metro bedroom mix). " +
-      "Set a free CENSUS_API_KEY (see the README) to add measured citywide medians by bedroom from Census ACS."));
+      "Per-bedroom figures are estimates (neighborhood rent × metro bedroom mix), " +
+      "not measured medians."));
   }
   $("#rent-note").textContent =
     "Zillow ZORI is a smoothed asking-rent index across all home types (houses, condos, " +
@@ -895,7 +904,9 @@ function renderEvictionsChart() {
   const years = [];
   for (let y = minY; y <= maxY; y++) years.push(y);
   const lookups = entries.map((e) => new Map(e.d.evictions.map((v) => [v.year, v])));
-  const nowYear = new Date().getFullYear();
+  // the export marks the in-progress year; the browser's clock may be later
+  const partialYear = entries.flatMap((e) => e.d.evictions)
+    .find((v) => v.partial)?.year ?? null;
 
   const datasets = entries.map((e, i) =>
     lineDataset(
@@ -905,7 +916,7 @@ function renderEvictionsChart() {
       {
         segment: { // dash the in-progress year
           borderDash: (ctx) =>
-            years[ctx.p1DataIndex] === nowYear ? [5, 4] : undefined,
+            years[ctx.p1DataIndex] === partialYear ? [5, 4] : undefined,
         },
       }
     ));
@@ -915,7 +926,7 @@ function renderEvictionsChart() {
   opts.plugins.tooltip.callbacks = {
     title: (items) => {
       const y = years[items[0]?.dataIndex];
-      return y === nowYear ? `${y} (partial year)` : String(y);
+      return y === partialYear ? `${y} (partial year)` : String(y);
     },
     label: (ctx) => `${ctx.dataset.label}: ${fmtInt(ctx.parsed.y)} notices`,
   };
@@ -927,7 +938,8 @@ function renderEvictionsChart() {
   });
 
   $("#note-evictions").textContent =
-    `Dashed final segment: ${nowYear} is in progress. Counts are notices filed, ` +
+    (partialYear ? `Dashed final segment: ${partialYear} was in progress when the data was exported. ` : "") +
+    "Counts are notices filed, " +
     "not households displaced — the citywide Ellis Act and owner-move-in waves of " +
     "the late '90s and mid-2010s are visible in most neighborhoods.";
   buildTable("evictions", years, entries, (e, y) => {
@@ -1188,9 +1200,9 @@ async function init() {
   loadMap();   // heat map is the pre-search view; loads independently
   try {
     await loadHoodList();
-    showStatus("Pick up to three neighborhoods. Their public data is already packed in, so comparisons load right away.");
+    showStatus(PICK_PROMPT);
   } catch (e) {
-    showStatus(`Couldn't reach the server or DataSF: ${e.message}`, { error: true });
+    showStatus(`Couldn't load the neighborhood list: ${e.message}`, { error: true });
   }
 }
 
