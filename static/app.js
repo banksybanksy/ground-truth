@@ -1,8 +1,7 @@
-/* SF Housing & Rent Trend Explorer — frontend logic.
-   Charts follow the dataviz method: 2px lines, ≥8px hover markers with a
-   surface ring, hairline grids, legend only for ≥2 series, table view for
-   every chart, colors assigned to a neighborhood when added (never repainted
-   as the selection changes). */
+/* Ground Truth — frontend. Reads the precomputed JSON in /data.
+   Charts: 2px lines, hover markers with a surface ring, hairline grids, a
+   legend only for two or more series, and a table view for every chart.
+   A neighborhood keeps its color slot for as long as it stays selected. */
 
 "use strict";
 
@@ -11,20 +10,20 @@
 
 const MAX_HOODS = 3;
 const state = {
-  allHoods: [],            // [{name, assessor_rows, eviction_rows, cached}]
-  selected: [],            // [{name, slot}]  slot ∈ 0..2 — sticky per hood
+  allHoods: [],            // [{name, assessor_rows, eviction_rows}]
+  selected: [],            // [{name, slot}]; slot is 0..2 and sticky per hood
   use: "res",
-  data: null,              // /api/trends response .hoods
-  rent: null,              // /api/rent response
-  map: null,               // /api/rentmap response (heat map)
+  data: null,              // {hood: trends/<slug>-<use>.json}
+  rent: null,              // rent.json
+  rentRequest: null,       // in-flight or settled rent.json promise
+  map: null,               // rentmap.json
+  mapShapes: [],           // [{path, hoods}] for selection outlines
   charts: {},              // Chart instances by key
   rentCharts: {},          // sparkline Chart instances by hood
   requestToken: 0,
-  rentToken: 0,
-  pollTimer: null,
 };
 
-const ZIP_RE = /^94\d{3}$/;
+const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const PICK_PROMPT = "Pick up to three neighborhoods. Their public data is already packed in, so comparisons load right away.";
 const FEATURED_HOODS = [
   { name: "Portola", label: "Portola" },
@@ -42,6 +41,8 @@ function normalizeHoodName(name) {
     hood.label.toLowerCase() === trimmed.toLowerCase());
   return match?.name || trimmed;
 }
+
+const isFeatured = (name) => FEATURED_HOODS.some((hood) => hood.name === name);
 
 function displayHoodName(name) {
   return FEATURED_HOODS.find((hood) => hood.name === name)?.label || name;
@@ -85,7 +86,7 @@ function applyChartDefaults() {
   Chart.defaults.font.size = 12;
   Chart.defaults.color = cssVar("--text-muted");
   Chart.defaults.borderColor = cssVar("--grid");
-  Chart.defaults.animation = { duration: 250 };
+  Chart.defaults.animation = REDUCED_MOTION ? false : { duration: 250 };
 }
 
 // ---------------------------------------------------------------------------
@@ -101,69 +102,14 @@ function fmtMoney(n) {
 const fmtMoneyFull = (n) => (n == null ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
 const pct = (a, b) => (a == null || !b ? null : ((a - b) / b) * 100);
 
-// --- Motion helpers
-
-const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-// Count a number up from 0 → target with easeOutCubic, formatting each frame.
-function countUp(node, target, fmt, dur = 720) {
-  if (REDUCED || target == null || !isFinite(target)) {
-    node.textContent = fmt(target);
-    return;
-  }
-  const t0 = performance.now();
-  const step = (now) => {
-    const p = Math.min(1, (now - t0) / dur);
-    node.textContent = fmt(target * (1 - Math.pow(1 - p, 3)));
-    if (p < 1) requestAnimationFrame(step);
-    else node.textContent = fmt(target);
-  };
-  requestAnimationFrame(step);
-}
-
-// Stagger a freshly-appended card into view.
-function staggerIn(node, i) {
-  if (REDUCED) return;
-  node.classList.add("enter");
-  node.style.setProperty("--enter-i", i);
-}
-
-// Chart.js option block that draws a line on progressively, left → right.
-function progressiveDraw(pointCount, total = 900) {
-  if (REDUCED || !pointCount) return false;
-  const per = total / pointCount;
-  const seen = {};
-  const ease = (ctx, axis) => {
-    const key = axis + ctx.datasetIndex + "_" + ctx.index;
-    if (ctx.type !== "data" || seen[key]) return 0;
-    seen[key] = true;
-    return ctx.index * per;
-  };
-  return {
-    x: { type: "number", easing: "linear", duration: per, from: NaN,
-         delay: (ctx) => ease(ctx, "x") },
-    y: { type: "number", easing: "linear", duration: per,
-         from: (ctx) => ctx.chart.scales.y.getPixelForValue(ctx.chart.scales.y.min),
-         delay: (ctx) => ease(ctx, "y") },
-  };
-}
-
 // ---------------------------------------------------------------------------
-// Status line (shared progress / error display)
+// Status line under the picker: the prompt, loading, and errors
 
-function showStatus(msg, { progress = null, error = false } = {}) {
+function showStatus(msg, { error = false } = {}) {
   const box = $("#status");
   box.hidden = false;
   box.classList.toggle("error", error);
-  box.textContent = "";
-  box.append(el("span", null, msg));
-  if (progress != null) {
-    const bar = el("div", "bar");
-    const fill = el("span");
-    fill.style.width = Math.round(progress * 100) + "%";
-    bar.append(fill);
-    box.append(bar);
-  }
+  box.textContent = msg;
 }
 function hideStatus() {
   $("#status").hidden = true;
@@ -175,7 +121,7 @@ function hideStatus() {
 
 async function loadHoodList() {
   state.allHoods = (await getJSON("/data/neighborhoods.json")).neighborhoods
-    .filter((h) => FEATURED_HOODS.some((featured) => featured.name === h.name));
+    .filter((h) => isFeatured(h.name));
   rebuildDatalist();
 }
 
@@ -201,19 +147,14 @@ function freeSlot() {
 
 function addHood(name) {
   name = normalizeHoodName(name);
-  const zip = ZIP_RE.test(name);
-  const featured = FEATURED_HOODS.some((hood) => hood.name === name);
-  if (zip) {
-    showStatus("Pick one of the six neighborhoods above.", { error: true });
-    return;
-  }
-  if (!zip && !featured && !hoodInfo(name)) {
-    showStatus(`"${name}" isn't one of the six neighborhoods — pick one above.`, { error: true });
+  if (!name) return;
+  if (!isFeatured(name)) {
+    showStatus(`"${name}" isn't one of the six neighborhoods. Pick one above.`, { error: true });
     return;
   }
   if (state.selected.some((s) => s.name === name)) return;
   if (state.selected.length >= MAX_HOODS) {
-    showStatus(`Compare mode holds ${MAX_HOODS} areas — remove one first.`, { error: true });
+    showStatus(`You can compare up to ${MAX_HOODS} neighborhoods. Remove one first.`, { error: true });
     return;
   }
   state.selected.push({ name, slot: freeSlot() });
@@ -228,28 +169,20 @@ function removeHood(name) {
   updateTrends();
 }
 
-function chipLabel(name) {
-  return ZIP_RE.test(name) ? `ZIP ${name}` : displayHoodName(name);
-}
-
 function renderChips() {
   const box = $("#hood-chips");
   box.textContent = "";
   for (const s of state.selected) {
-    const zip = ZIP_RE.test(s.name);
+    const label = displayHoodName(s.name);
     const chip = el("span", "chip");
     const dot = el("span", "dot");
     dot.style.background = slotColor(s.slot);
-    chip.append(dot, el("span", null, chipLabel(s.name)));
-    if (zip) {
-      const hoods = state.map?.features.find((f) => f.zip === s.name)?.hoods || [];
-      chip.append(el("span", "meta", hoods.length ? hoods.join(" · ") : "exact ZIP"));
-    } else {
-      const info = hoodInfo(s.name) || {};
-      chip.append(el("span", "meta", `${fmtInt(info.assessor_rows)} records`));
-    }
+    chip.append(dot, el("span", null, label));
+    const info = hoodInfo(s.name);
+    if (info) chip.append(el("span", "meta", `${fmtInt(info.assessor_rows)} records`));
     const close = el("button", null, "×");
-    close.title = "Remove";
+    close.type = "button";
+    close.setAttribute("aria-label", `Remove ${label}`);
     close.onclick = () => removeHood(s.name);
     chip.append(close);
     box.append(chip);
@@ -278,7 +211,6 @@ async function loadMap() {
     state.map = await getJSON("/data/rentmap.json");
     status.hidden = true;
     renderMap();
-    rebuildDatalist();
   } catch (e) {
     status.classList.add("error");
     status.textContent = `Couldn't load the rent map: ${e.message}`;
@@ -315,37 +247,32 @@ function renderMap() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "Map of SF ZIP codes shaded by typical asking rent");
+  svg.setAttribute("aria-label", "Map of San Francisco ZIP codes shaded by typical asking rent");
   const tip = $("#map-tip");
-  state.mapShapes = {};
+  state.mapShapes = [];
 
   const labelLayer = document.createElementNS(svg.namespaceURI, "g");
-  const placed = []; // label centers already drawn, to avoid overlaps downtown
+  const placed = []; // label anchors already drawn, to avoid overlaps downtown
   for (const f of feats) {
-    let d = "";
-    let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
-    for (const ring of ringsOf(f.geometry)) {
-      d += ring.map((p, i) => {
-        const x = px(p[0]), y = py(p[1]);
-        if (x < bx0) bx0 = x; if (x > bx1) bx1 = x;
-        if (y < by0) by0 = y; if (y > by1) by1 = y;
-        return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
-      }).join("") + "Z";
-    }
+    const rings = ringsOf(f.geometry).map((ring) => ring.map((p) => [px(p[0]), py(p[1])]));
+    const d = rings.map((ring) =>
+      ring.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("") + "Z"
+    ).join("");
     const path = document.createElementNS(svg.namespaceURI, "path");
     path.setAttribute("d", d);
     path.setAttribute("fill-rule", "evenodd");
     path.classList.add("zip-shape");
     const has = f.value != null;
+    const fill = has ? rampColor(f.value) : null;
     if (has) {
-      path.setAttribute("fill", rampColor(f.value));
+      path.setAttribute("fill", fill);
     } else {
       path.setAttribute("fill", "var(--wash)");
       path.classList.add("nodata");
     }
     path.addEventListener("mousemove", (ev) => {
       tip.hidden = false;
-      tip.innerHTML = "";
+      tip.textContent = "";
       tip.append(el("div", "t-zip", f.zip));
       tip.append(el("div", "t-rent", has
         ? `${fmtMoneyFull(f.value)}/mo typical asking` +
@@ -358,33 +285,24 @@ function renderMap() {
     });
     path.addEventListener("mouseleave", () => { tip.hidden = true; });
     svg.append(path);
-    state.mapShapes[f.zip] = path;
+    state.mapShapes.push({ path, hoods: f.hoods });
 
-    // label the polygons big enough to hold text (ink picked by fill depth);
-    // the cramped downtown cluster falls back to tooltips
-    const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+    // Label shapes big enough to hold text. The anchor is the centroid of the
+    // largest ring, and only if it falls inside the shape: a bounding-box
+    // center can land on a neighboring ZIP (94105 sat on 94111). Anything
+    // that doesn't fit falls back to the tooltip.
+    const anchor = labelAnchor(rings);
+    if (!has || !anchor) continue;
+    const [cx, cy] = anchor.point;
     const clear = placed.every(([x, y]) => Math.abs(x - cx) > 44 || Math.abs(y - cy) > 36);
-    if (has && clear && bx1 - bx0 > 74 && by1 - by0 > 42) {
-      placed.push([cx, cy]);
-      const t = (f.value - vMin) / (vMax - vMin || 1);
-      const ink = t > 0.55 ? "#ffffff" : "#0d366b";
-      const label = document.createElementNS(svg.namespaceURI, "text");
-      label.classList.add("zip-label");
-      label.setAttribute("x", cx); label.setAttribute("y", cy - 2);
-      label.setAttribute("text-anchor", "middle");
-      label.setAttribute("font-size", "12");
-      label.setAttribute("fill", ink);
-      label.textContent = f.zip;
-      const val = document.createElementNS(svg.namespaceURI, "text");
-      val.classList.add("zip-label");
-      val.setAttribute("x", cx); val.setAttribute("y", cy + 12);
-      val.setAttribute("text-anchor", "middle");
-      val.setAttribute("font-size", "11");
-      val.setAttribute("fill", ink);
-      // one decimal — the citywide range is only ~$3-6.5K, whole-K rounding misleads
-      val.innerHTML = `<tspan class="val">$${(f.value / 1000).toFixed(1)}K</tspan>`;
-      labelLayer.append(label, val);
-    }
+    if (!clear || anchor.width <= 74 || anchor.height <= 42) continue;
+    placed.push([cx, cy]);
+    const ink = labelInk(fill);
+    const zipText = svgText(svg, cx, cy - 2, 12, ink, f.zip);
+    // One decimal: the citywide range is only ~$3K to $6.5K.
+    const valText = svgText(svg, cx, cy + 12, 11, ink, `$${(f.value / 1000).toFixed(1)}K`);
+    valText.classList.add("val");
+    labelLayer.append(zipText, valText);
   }
   svg.append(labelLayer);
   box.append(svg);
@@ -396,127 +314,133 @@ function renderMap() {
   updateMapSelection();
 }
 
+function svgText(svg, x, y, size, fill, text) {
+  const node = document.createElementNS(svg.namespaceURI, "text");
+  node.classList.add("zip-label");
+  node.setAttribute("x", x);
+  node.setAttribute("y", y);
+  node.setAttribute("text-anchor", "middle");
+  node.setAttribute("font-size", size);
+  node.setAttribute("fill", fill);
+  node.textContent = text;
+  return node;
+}
+
+function ringArea(ring) {
+  let a = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    a += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  }
+  return a / 2;
+}
+
+function insideRings(rings, x, y) {
+  let inside = false; // even-odd across every ring, matching fill-rule
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function labelAnchor(rings) {
+  const ring = rings.reduce((a, b) => (Math.abs(ringArea(b)) > Math.abs(ringArea(a)) ? b : a));
+  const area = ringArea(ring);
+  if (!area) return null;
+  let cx = 0, cy = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const cross = ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+    cx += (ring[j][0] + ring[i][0]) * cross;
+    cy += (ring[j][1] + ring[i][1]) * cross;
+  }
+  cx /= 6 * area;
+  cy /= 6 * area;
+  if (!insideRings(rings, cx, cy)) return null;
+  const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
+  return {
+    point: [cx, cy],
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+  };
+}
+
+// Pick whichever ink (white or the ramp's darkest step) contrasts more with
+// the fill it sits on.
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function labelInk(fill) {
+  const dark = SEQ_RAMP[SEQ_RAMP.length - 1];
+  const bg = luminance(fill);
+  const onWhite = 1.05 / (bg + 0.05);
+  const onDark = (bg + 0.05) / (luminance(dark) + 0.05);
+  return onWhite >= onDark ? "#ffffff" : dark;
+}
+
+// Outline every ZIP the selected neighborhoods are matched to.
 function updateMapSelection() {
-  if (!state.mapShapes) return;
   const chosen = new Set(state.selected.map((s) => s.name));
-  for (const [zip, path] of Object.entries(state.mapShapes)) {
-    path.classList.toggle("selected", chosen.has(zip));
+  for (const { path, hoods } of state.mapShapes) {
+    const selected = hoods.some((h) => chosen.has(h));
+    path.classList.toggle("selected", selected);
+    // Draw outlined shapes last so neighbors don't paint over the stroke.
+    if (selected) path.parentNode.insertBefore(path, path.parentNode.lastChild);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Data loading with download progress
-
-function startPolling(hoods) {
-  stopPolling();
-  const phases = { assessor: "property records", evictions: "eviction notices" };
-  state.pollTimer = setInterval(async () => {
-    for (const name of hoods) {
-      try {
-        const p = await (await fetch(`/api/progress?hood=${encodeURIComponent(name)}`)).json();
-        if (p.phase === "assessor" && p.total) {
-          showStatus(
-            `Downloading ${name} — ${fmtInt(p.fetched)} of ~${fmtInt(p.total)} ${phases.assessor}…`,
-            { progress: p.fetched / p.total });
-          return;
-        }
-        if (p.phase === "evictions") {
-          showStatus(`Downloading ${name} — ${phases.evictions}…`, { progress: 0.95 });
-          return;
-        }
-      } catch { /* server busy with the download itself — fine */ }
-    }
-  }, 900);
-}
-function stopPolling() {
-  if (state.pollTimer) clearInterval(state.pollTimer);
-  state.pollTimer = null;
-}
+// Data loading
 
 async function updateTrends() {
   const token = ++state.requestToken;
   const names = state.selected.map((s) => s.name);
   if (!names.length) {
     state.data = null;
-    stopPolling();
     showStatus(PICK_PROMPT);
     renderAll();
     return;
   }
+  loadRent();
   showStatus("Loading…");
   try {
-    const rows = await Promise.all(names.map(async (name) => {
-      return [name, await getJSON(`/data/trends/${hoodSlug(name)}-${state.use}.json`)];
-    }));
+    const rows = await Promise.all(names.map(async (name) =>
+      [name, await getJSON(`/data/trends/${hoodSlug(name)}-${state.use}.json`)]));
     if (token !== state.requestToken) return; // superseded by a newer request
     state.data = Object.fromEntries(rows);
-    for (const n of names) {
-      const info = hoodInfo(n);
-      if (info) info.cached = true;
-    }
     hideStatus();
-    renderAll();
   } catch (e) {
     if (token !== state.requestToken) return;
-    showStatus(`Couldn't load data: ${e.message}`, { error: true });
-  } finally {
-    if (token === state.requestToken) stopPolling();
+    // Drop the old charts rather than leave them labeled with the new selection.
+    state.data = null;
+    showStatus(`Couldn't load property and eviction data: ${e.message}`, { error: true });
   }
-  // Only the freshest request drives the rent panel, and always with the
-  // *current* selection (an older call's closure list could be stale).
-  if (token === state.requestToken) {
-    loadRent(state.selected.map((s) => s.name));
-  }
+  renderAll();
 }
 
-async function loadRent(names) {
-  const token = ++state.rentToken;
+// rent.json covers all six neighborhoods, so it's fetched once and reused.
+// A failed fetch is retried on the next selection change.
+async function loadRent() {
   const status = $("#rent-status");
-  status.hidden = false;
-  status.classList.remove("error");
-  status.textContent = "Loading rent index…";
+  if (!state.rentRequest) {
+    status.hidden = false;
+    status.classList.remove("error");
+    status.textContent = "Loading the rent benchmark…";
+    state.rentRequest = getJSON("/data/rent.json");
+  }
   try {
-    const body = await getJSON("/data/rent.json");
-    if (token !== state.rentToken) return;
-    state.rent = body;
+    state.rent = await state.rentRequest;
     status.hidden = true;
     renderRent();
   } catch (e) {
-    if (token !== state.rentToken) return;
+    state.rentRequest = null;
     status.classList.add("error");
-    status.textContent = `Couldn't load rent benchmark: ${e.message}`;
-  }
-}
-
-async function refreshRent() {
-  const names = state.selected.map((s) => s.name);
-  const status = $("#rent-status");
-  status.hidden = false;
-  status.classList.remove("error");
-  status.textContent = "Re-downloading rent index from Zillow / Apartment List…";
-  try {
-    const res = await fetch("/api/refresh_rent", { method: "POST" });
-    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
-    if (names.length) await loadRent(names);
-    else status.hidden = true;
-  } catch (e) {
-    status.classList.add("error");
-    status.textContent = `Refresh failed: ${e.message}`;
-  }
-}
-
-async function refreshHood(name) {
-  showStatus(`Re-downloading ${name} from DataSF…`, { progress: 0 });
-  startPolling([name]);
-  try {
-    const res = await fetch(`/api/refresh?hood=${encodeURIComponent(name)}`, { method: "POST" });
-    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
-    hideStatus();
-    await updateTrends();
-  } catch (e) {
-    showStatus(`Refresh failed: ${e.message}`, { error: true });
-  } finally {
-    stopPolling();
+    status.textContent = `Couldn't load the rent benchmark: ${e.message}`;
   }
 }
 
@@ -529,18 +453,23 @@ function renderAll() {
   renderValuesChart();
   renderEvictionsChart();
   renderReasonsChart();
-  const has = !!state.data && state.selected.length > 0;
-  for (const id of ["tiles", "card-rent", "card-values", "card-evictions", "card-reasons"]) {
+  const picked = state.selected.length > 0;
+  const has = picked && !!state.data;
+  // Rent comes from its own file, so it stays up when the trends files fail.
+  $("#card-rent").style.display = picked ? "" : "none";
+  for (const id of ["tiles", "card-values", "card-evictions", "card-reasons"]) {
     document.getElementById(id).style.display = has ? "" : "none";
   }
-  // ZIP-only selections have no assessor data — drop the values card entirely
-  if (has && !seriesEntries().some((e) => e.d.values.length)) {
-    document.getElementById("card-values").style.display = "none";
+  // Hide a chart card outright when no selected hood has rows for it.
+  const entries = seriesEntries();
+  for (const [id, key] of [["card-values", "values"], ["card-evictions", "evictions"],
+                           ["card-reasons", "reasons"]]) {
+    if (has && !entries.some((e) => e.d[key].length)) $(`#${id}`).style.display = "none";
   }
 }
 
+// Selected hoods in selection order, skipping any whose data isn't loaded.
 function seriesEntries() {
-  // selection order, with data attached; skips hoods whose data isn't loaded yet
   return state.selected
     .filter((s) => state.data && state.data[s.name])
     .map((s) => ({ ...s, d: state.data[s.name] }));
@@ -566,38 +495,28 @@ function renderTiles() {
     const h = el("h3");
     const dot = el("span", "dot");
     dot.style.background = slotColor(slot);
-    h.append(dot, el("span", null, chipLabel(name)));
+    h.append(dot, el("span", null, displayHoodName(name)));
     tile.append(h);
 
     const stats = el("div", "stats");
-    const stat = (value, label, delta, anim) => {
+    const stat = (value, label, delta) => {
       const s = el("div", "stat");
-      const v = el("div", "v", value);
-      s.append(v, el("div", "l", label));
+      s.append(el("div", "v", value), el("div", "l", label));
       if (delta) s.append(el("div", "d", delta));
       stats.append(s);
-      if (anim) countUp(v, anim.target, anim.fmt);
     };
-    const zip = ZIP_RE.test(name);
     stat(
       latest ? fmtMoney(latest.median) : "—",
-      latest ? `median assessed, ${latest.year} roll`
-             : zip ? "assessed values aren't ZIP-coded" : "median assessed",
-      change != null ? `${change >= 0 ? "+" : ""}${change.toFixed(1)}% vs ${latest.year - 5}` : null,
-      latest ? { target: latest.median, fmt: fmtMoney } : null
+      latest ? `median assessed, ${latest.year} roll` : "median assessed",
+      change != null ? `${change >= 0 ? "+" : ""}${change.toFixed(1)}% vs ${latest.year - 5}` : null
     );
-    if (!zip) {
-      stat(latest ? fmtInt(latest.count) : "—", "parcels in view", null,
-        latest ? { target: latest.count, fmt: (n) => fmtInt(Math.round(n)) } : null);
-    }
+    stat(latest ? fmtInt(latest.count) : "—", "parcels in view");
     stat(
       evLatest ? fmtInt(evLatest.count) : "0",
       evLatest ? `notices filed, ${evLatest.year}` : "notices filed",
-      evLatest && evPrev ? `${evLatest.count - evPrev.count >= 0 ? "+" : ""}${evLatest.count - evPrev.count} vs ${evPrev.year}` : null,
-      evLatest ? { target: evLatest.count, fmt: (n) => fmtInt(Math.round(n)) } : null
+      evLatest && evPrev ? `${evLatest.count - evPrev.count >= 0 ? "+" : ""}${evLatest.count - evPrev.count} vs ${evPrev.year}` : null
     );
     tile.append(stats);
-    staggerIn(tile, box.children.length);
     box.append(tile);
   }
 }
@@ -626,15 +545,12 @@ function renderRent() {
     const h = el("h3");
     const dot = el("span", "dot");
     dot.style.background = color;
-    h.append(dot, el("span", null, chipLabel(s.name)));
+    h.append(dot, el("span", null, displayHoodName(s.name)));
     panel.append(h);
-
-    staggerIn(panel, box.children.length);
 
     if (!e || !e.available) {
       panel.append(el("div", "none",
-        e ? "Zillow's rent index doesn't cover this neighborhood's ZIP — no benchmark available."
-          : "Loading…"));
+        "Zillow's rent index doesn't cover this neighborhood's ZIPs, so there's no benchmark."));
       box.append(panel);
       continue;
     }
@@ -642,12 +558,10 @@ function renderRent() {
     // hero: estimated 1-bedroom
     const beds = e.bedrooms || {};
     const hero = el("div", "rent-hero");
-    const heroNum = el("span", "num", beds.br1 != null ? fmtMoneyFull(beds.br1) : "—");
-    hero.append(heroNum);
-    hero.append(el("span", "lbl", "est. 1-bedroom / mo"));
+    hero.append(el("span", "num", beds.br1 != null ? fmtMoneyFull(beds.br1) : "—"));
+    hero.append(el("span", "lbl", "1-bedroom / mo"));
     hero.append(el("span", "est", "est."));
     panel.append(hero);
-    if (beds.br1 != null) countUp(heroNum, beds.br1, fmtMoneyFull, 850);
 
     // overall + YoY
     const overall = el("div", "rent-overall");
@@ -841,16 +755,15 @@ function destroyChart(key) {
 
 function renderValuesChart() {
   destroyChart("values");
-  const all = seriesEntries();
-  const entries = all.filter((e) => e.d.values.length); // ZIPs have no assessor rows
-  const zipsSkipped = all.length - entries.length;
+  const entries = seriesEntries().filter((e) => e.d.values.length);
   if (!entries.length) return;
 
-  const years = [...new Set(entries.flatMap((e) => e.d.values.map((v) => v.year)))].sort();
+  const years = [...new Set(entries.flatMap((e) => e.d.values.map((v) => v.year)))]
+    .sort((a, b) => a - b);
   const lookups = entries.map((e) => new Map(e.d.values.map((v) => [v.year, v])));
 
   const datasets = entries.map((e, i) =>
-    lineDataset(e.name, e.slot, years.map((y) => lookups[i].get(y)?.median ?? null)));
+    lineDataset(displayHoodName(e.name), e.slot, years.map((y) => lookups[i].get(y)?.median ?? null)));
 
   const opts = baseLineOptions((v) => fmtMoney(v));
   opts.plugins.tooltip.callbacks = {
@@ -864,7 +777,6 @@ function renderValuesChart() {
       return v?.mean != null ? [`(mean ${fmtMoneyFull(v.mean)})`] : [];
     },
   };
-  opts.animations = progressiveDraw(years.length);
   state.charts.values = new Chart($("#chart-values"), {
     type: "line",
     data: { labels: years, datasets },
@@ -872,9 +784,7 @@ function renderValuesChart() {
   });
 
   $("#note-values").textContent =
-    "Gaps mean too few parcels that year for a reliable median. " +
-    useFilterNote() +
-    (zipsSkipped ? " ZIP selections don't appear here — the assessor roll isn't ZIP-coded." : "");
+    "Gaps mean too few parcels that year for a reliable median. " + useFilterNote();
   buildTable("values", years, entries, (e, y) => {
     const v = new Map(e.d.values.map((x) => [x.year, x])).get(y);
     return v?.median != null ? `${fmtMoneyFull(v.median)} (${fmtInt(v.count)})` : null;
@@ -910,7 +820,7 @@ function renderEvictionsChart() {
 
   const datasets = entries.map((e, i) =>
     lineDataset(
-      chipLabel(e.name),
+      displayHoodName(e.name),
       e.slot,
       years.map((y) => lookups[i].get(y)?.count ?? 0), // no notices = 0, honestly
       {
@@ -930,7 +840,6 @@ function renderEvictionsChart() {
     },
     label: (ctx) => `${ctx.dataset.label}: ${fmtInt(ctx.parsed.y)} notices`,
   };
-  opts.animations = progressiveDraw(years.length, 1100);
   state.charts.evictions = new Chart($("#chart-evictions"), {
     type: "line",
     data: { labels: years, datasets },
@@ -969,7 +878,7 @@ function renderReasonsChart() {
   if (!top.length) return;
 
   const datasets = entries.map((e, i) => ({
-    label: chipLabel(e.name),
+    label: displayHoodName(e.name),
     data: top.map((k) => perHood[i].get(k) || 0),
     backgroundColor: slotColor(e.slot),
     maxBarThickness: 16,
@@ -1025,7 +934,7 @@ function buildTable(key, rows, entries, cellFn, rowHeader, caption) {
   const table = document.createElement("table");
   const thead = table.createTHead().insertRow();
   thead.append(el("th", null, rowHeader));
-  for (const e of entries) thead.append(el("th", null, chipLabel(e.name)));
+  for (const e of entries) thead.append(el("th", null, displayHoodName(e.name)));
   const tbody = table.createTBody();
   for (const r of rows) {
     const tr = tbody.insertRow();
@@ -1048,98 +957,7 @@ function toggleTable(key, btn) {
   tableBox.hidden = !showTable;
   plot.style.display = showTable ? "none" : "";
   btn.textContent = showTable ? "Chart" : "Table";
-}
-
-// ---------------------------------------------------------------------------
-// Address / parcel lookup
-
-async function runLookup() {
-  const q = $("#lookup-input").value.trim();
-  if (!q) return;
-  const status = $("#lookup-status");
-  status.hidden = false;
-  status.classList.remove("error");
-  status.textContent = "Searching DataSF…";
-  $("#lookup-results").textContent = "";
-  $("#parcel-detail").hidden = true;
-  try {
-    const res = await fetch(`/api/lookup?q=${encodeURIComponent(q)}`);
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    status.hidden = true;
-    renderLookupResults(body);
-  } catch (e) {
-    status.classList.add("error");
-    status.textContent = `Search failed: ${e.message}`;
-  }
-}
-
-function renderLookupResults({ parcels, truncated }) {
-  const box = $("#lookup-results");
-  box.textContent = "";
-  if (!parcels.length) {
-    box.append(el("p", "chart-note",
-      "No parcels matched. Try just the street number and name (no “St”/“Ave”), or a 7-character parcel number."));
-    return;
-  }
-  for (const p of parcels) {
-    const btn = el("button", "parcel-row");
-    const left = el("div");
-    left.append(el("div", "loc", p.location || `Parcel ${p.parcel_number}`));
-    const bits = [
-      `Parcel ${p.parcel_number}`,
-      p.neighborhood,
-      p.use,
-      p.units ? `${p.units} unit${p.units > 1 ? "s" : ""}` : null,
-      p.built ? `built ${p.built}` : null,
-    ].filter(Boolean);
-    left.append(el("div", "sub", bits.join(" · ")));
-    const last = p.history[p.history.length - 1];
-    const right = el("div", "val", last ? `${fmtMoney(last.value)} (${last.year})` : "—");
-    btn.append(left, right);
-    btn.onclick = () => {
-      box.querySelectorAll(".parcel-row").forEach((b) => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      showParcelDetail(p);
-    };
-    box.append(btn);
-  }
-  if (truncated) {
-    box.append(el("p", "chart-note", "Showing the first 20 matching parcels — narrow the search for more specific results."));
-  }
-}
-
-function showParcelDetail(p) {
-  $("#parcel-detail").hidden = false;
-  $("#parcel-title").textContent = p.location || `Parcel ${p.parcel_number}`;
-  $("#parcel-sub").textContent = [
-    `Parcel ${p.parcel_number}`, p.neighborhood, p.use,
-    p.units ? `${p.units} unit${p.units > 1 ? "s" : ""}` : null,
-    p.built ? `built ${p.built}` : null,
-  ].filter(Boolean).join(" · ");
-
-  destroyChart("parcel");
-  const years = p.history.map((h) => h.year);
-  const opts = baseLineOptions((v) => fmtMoney(v));
-  opts.plugins.legend.display = false; // single series — the title names it
-  opts.plugins.tooltip.callbacks = {
-    label: (ctx) => `Assessed: ${fmtMoneyFull(ctx.parsed.y)}`,
-  };
-  opts.animations = progressiveDraw(years.length, 700);
-  state.charts.parcel = new Chart($("#chart-parcel"), {
-    type: "line",
-    data: {
-      labels: years,
-      datasets: [lineDataset("Assessed value", 0, p.history.map((h) => h.value), {
-        pointRadius: 3,
-        pointBackgroundColor: slotColor(0),
-        pointBorderColor: cssVar("--surface-1"),
-        pointBorderWidth: 2,
-      })],
-    },
-    options: opts,
-  });
-  $("#parcel-detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  btn.setAttribute("aria-pressed", showTable ? "true" : "false");
 }
 
 // ---------------------------------------------------------------------------
@@ -1150,10 +968,10 @@ function wire() {
   $("#hood-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addHood($("#hood-input").value.trim());
   });
-  // datalist click-selection fires "change"
+  // Picking from the datalist fires "change" without a keypress.
   $("#hood-input").addEventListener("change", () => {
     const v = normalizeHoodName($("#hood-input").value);
-    if (hoodInfo(v)) addHood(v);
+    if (isFeatured(v)) addHood(v);
   });
 
   document.querySelectorAll(".quick-hood").forEach((button) => {
@@ -1169,8 +987,10 @@ function wire() {
 
   document.querySelectorAll(".seg").forEach((b) => {
     b.onclick = () => {
-      document.querySelectorAll(".seg").forEach((x) => x.classList.remove("active"));
-      b.classList.add("active");
+      document.querySelectorAll(".seg").forEach((x) => {
+        x.classList.toggle("active", x === b);
+        x.setAttribute("aria-pressed", x === b ? "true" : "false");
+      });
       state.use = b.dataset.use;
       updateTrends();
     };
@@ -1180,8 +1000,8 @@ function wire() {
     b.onclick = () => toggleTable(b.dataset.chart, b);
   });
 
-  // Dark mode has its own palette steps — rebuild charts when the scheme flips.
-  // (Guard against spurious 'change' events that report the same scheme.)
+  // Dark mode has its own palette steps, so rebuild charts when the scheme
+  // flips. Some browsers fire "change" without the scheme actually changing.
   const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
   let wasDark = darkMq.matches;
   darkMq.addEventListener("change", (ev) => {
@@ -1196,11 +1016,12 @@ function wire() {
 async function init() {
   applyChartDefaults();
   wire();
-  renderAll(); // hides empty sections
-  loadMap();   // heat map is the pre-search view; loads independently
+  renderAll(); // hides the empty sections
+  loadMap();
   try {
     await loadHoodList();
-    showStatus(PICK_PROMPT);
+    renderChips(); // fills in record counts for anything picked during the load
+    if (!state.selected.length) showStatus(PICK_PROMPT);
   } catch (e) {
     showStatus(`Couldn't load the neighborhood list: ${e.message}`, { error: true });
   }

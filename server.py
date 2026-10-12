@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-SF Housing & Rent Trend Explorer — local server.
+Ground Truth: data fetching, aggregation, and a local server.
 
-Zero-dependency: Python stdlib only (http.server, sqlite3, urllib).
-Serves the frontend from ./static and a small JSON API backed by a local
-SQLite cache of two DataSF datasets plus a market-rent benchmark:
+Python stdlib only (http.server, sqlite3, urllib). export_static.py imports
+the fetch and aggregation functions here to write static/data/. Run directly,
+this serves static/ plus a JSON API backed by a local SQLite cache of two
+DataSF datasets and a market-rent benchmark:
 
   - Assessor Historical Secured Property Tax Rolls (wv5m-vpq2), roll years 2007-2025
   - Eviction Notices (5cei-gny5), 1997-present
@@ -16,6 +17,8 @@ Data is fetched on demand (SODA $where filters, paged; rent CSVs downloaded
 once), cached in ./data/cache.db, and re-fetched only on explicit refresh.
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -133,9 +136,6 @@ HOOD_ZIPS = {
     "Presidio": ["94129"],
 }
 
-# Bedroom labels for the benchmark UI, in display order.
-BEDROOM_LABELS = [("studio", "Studio"), ("br1", "1 BR"), ("br2", "2 BR"), ("br3", "3 BR")]
-
 # Every SF ZIP we track (union of the crosswalk), used for the rent heat map,
 # ZIP validation, and boundary fetch. 94111 rides with FiDi in the crosswalk.
 SF_ZIPS = sorted({z for zips in HOOD_ZIPS.values() for z in zips})
@@ -207,12 +207,6 @@ def init_db():
                 bed TEXT PRIMARY KEY,  -- overall | br1 | br2
                 value REAL,
                 asof TEXT
-            );
-            CREATE TABLE IF NOT EXISTS rent_acs (
-                hood TEXT NOT NULL,
-                bed TEXT NOT NULL,     -- studio | br1 | br2 | br3
-                value REAL,
-                PRIMARY KEY (hood, bed)
             );
             CREATE TABLE IF NOT EXISTS rent_meta (
                 k TEXT PRIMARY KEY,
@@ -520,15 +514,12 @@ def hood_trends(hood, use_filter):
 # ---------------------------------------------------------------------------
 # Rent benchmark (market asking rent — external to the DataSF datasets)
 
-import csv       # noqa: E402  (kept beside the code that uses it)
-import io        # noqa: E402
-
 _rent_lock = threading.Lock()
 
 
 def _http_text(url, timeout=120):
     req = urllib.request.Request(url, headers={
-        "User-Agent": "RentTrends-local/1.0 (personal apartment-hunting tool)",
+        "User-Agent": "GroundTruth/1.0 (personal apartment-hunting tool)",
         "Accept": "text/csv,text/html,*/*",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -790,7 +781,6 @@ def refresh_rent():
     conn = db()
     try:
         with conn:
-            conn.execute("DELETE FROM rent_acs")
             conn.execute("DELETE FROM rent_meta WHERE k='city_acs'")
     finally:
         conn.close()
@@ -988,16 +978,14 @@ def main():
     init_db()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
-    print(f"SF Housing & Rent Trend Explorer → {url}")
-    print(f"Cache: {DB_PATH}")
-    print("First selection of a neighborhood downloads its data from DataSF "
-          "(roughly 15-90s depending on size). Ctrl-C to stop.")
+    print(f"Ground Truth → {url}")
+    print("The page reads static/data/; run export_static.py to refresh it. Ctrl-C to stop.")
     if not os.environ.get("NO_BROWSER"):
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nbye")
+        pass
 
 
 if __name__ == "__main__":

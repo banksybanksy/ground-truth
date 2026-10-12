@@ -29,22 +29,22 @@
     <div class="hood-picker">
       <label for="hood-input">Neighborhoods <span class="hint">(compare up to 3)</span></label>
       <div class="quick-hoods" aria-label="Our neighborhoods">
-        <button type="button" class="quick-hood" data-hood="Portola">Portola</button>
-        <button type="button" class="quick-hood" data-hood="Bernal Heights">Bernal Heights</button>
-        <button type="button" class="quick-hood" data-hood="Marina">Marina</button>
-        <button type="button" class="quick-hood" data-hood="Pacific Heights">Pacific Heights</button>
-        <button type="button" class="quick-hood" data-hood="Twin Peaks">Twin Peaks</button>
-        <button type="button" class="quick-hood" data-hood="West of Twin Peaks">West Portal</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="Portola">Portola</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="Bernal Heights">Bernal Heights</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="Marina">Marina</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="Pacific Heights">Pacific Heights</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="Twin Peaks">Twin Peaks</button>
+        <button type="button" class="quick-hood" aria-pressed="false" data-hood="West of Twin Peaks">West Portal</button>
       </div>
       <div class="hood-input-row">
         <input id="hood-input" list="hood-options" placeholder="Or type one of the six…" autocomplete="off">
         <datalist id="hood-options"></datalist>
-        <button id="hood-add" class="btn">Add</button>
+        <button id="hood-add" type="button" class="btn">Add</button>
       </div>
       <div id="hood-chips" class="chips" aria-live="polite"></div>
       <p class="hood-note">West Portal uses San Francisco’s broader “West of Twin Peaks” reporting area.</p>
     </div>
-    <div id="status" class="status" hidden></div>
+    <div id="status" class="status" role="status" hidden></div>
   </section>
 
   <!-- Rent benchmark — the primary answer -->
@@ -56,13 +56,13 @@
           three-bedroom estimates and the recent trend. A useful benchmark, not a live listing.</p>
       </div>
     </div>
-    <div id="rent-status" class="status" hidden></div>
+    <div id="rent-status" class="status" role="status" hidden></div>
     <div id="rent-panels" class="rent-grid"></div>
     <div id="rent-metro" class="rent-metro"></div>
     <p class="chart-note" id="rent-note"></p>
   </section>
 
-  <!-- Rent heat map (the pre-search view) -->
+  <!-- Rent heat map -->
   <section class="card" id="card-map">
     <div class="chart-head">
       <div>
@@ -71,7 +71,7 @@
           index, latest month) · darker&nbsp;=&nbsp;pricier · shown for citywide context.</p>
       </div>
     </div>
-    <div id="map-status" class="status" hidden></div>
+    <div id="map-status" class="status" role="status" hidden></div>
     <div class="map-wrap">
       <div id="map-box"></div>
       <div class="map-legend" id="map-legend" hidden>
@@ -90,12 +90,12 @@
       <p>Useful background once the rent numbers have done their job.</p>
     </div>
     <div class="use-picker">
-      <label id="use-label">Property type <span class="hint">(for assessed values below)</span></label>
+      <span id="use-label" class="field-label">Property type <span class="hint">(for assessed values below)</span></span>
       <div class="segmented" role="group" aria-labelledby="use-label">
-        <button data-use="res" class="seg active">All residential</button>
-        <button data-use="sfr" class="seg">Single-family</button>
-        <button data-use="mfr" class="seg">Multi-family</button>
-        <button data-use="all" class="seg">All parcels</button>
+        <button type="button" data-use="res" class="seg active" aria-pressed="true">All residential</button>
+        <button type="button" data-use="sfr" class="seg" aria-pressed="false">Single-family</button>
+        <button type="button" data-use="mfr" class="seg" aria-pressed="false">Multi-family</button>
+        <button type="button" data-use="all" class="seg" aria-pressed="false">All parcels</button>
       </div>
     </div>
   </section>
@@ -111,7 +111,7 @@
         <p class="chart-sub">Secured tax roll, 2007–2025 · assessed value = land +
           improvements + fixtures · <em>lags market prices by design (Prop 13)</em></p>
       </div>
-      <button class="btn ghost table-toggle" data-chart="values">Table</button>
+      <button type="button" class="btn ghost table-toggle" data-chart="values" aria-pressed="false" aria-controls="table-values">Table</button>
     </div>
     <div class="plot"><canvas id="chart-values"></canvas></div>
     <div class="table-view" id="table-values" hidden></div>
@@ -125,7 +125,7 @@
         <p class="chart-sub">Notices filed with the SF Rent Board, 1997–present ·
           a notice is a filing, <em>not</em> a completed eviction</p>
       </div>
-      <button class="btn ghost table-toggle" data-chart="evictions">Table</button>
+      <button type="button" class="btn ghost table-toggle" data-chart="evictions" aria-pressed="false" aria-controls="table-evictions">Table</button>
     </div>
     <div class="plot"><canvas id="chart-evictions"></canvas></div>
     <div class="table-view" id="table-evictions" hidden></div>
@@ -139,7 +139,7 @@
         <p class="chart-sub">All years combined · one notice can cite several reasons,
           so reasons sum to more than the notice count</p>
       </div>
-      <button class="btn ghost table-toggle" data-chart="reasons">Table</button>
+      <button type="button" class="btn ghost table-toggle" data-chart="reasons" aria-pressed="false" aria-controls="table-reasons">Table</button>
     </div>
     <div class="plot plot-tall"><canvas id="chart-reasons"></canvas></div>
     <div class="table-view" id="table-reasons" hidden></div>
