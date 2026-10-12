@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Build the six-neighborhood, static-data edition for Cloudflare Pages."""
+"""Write the JSON the page reads (static/data/) for the six neighborhoods."""
 
 import json
 import os
 import re
 
 import server
-
 
 FEATURED_HOODS = [
     "Portola",

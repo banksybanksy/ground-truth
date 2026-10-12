@@ -1,0 +1,7 @@
+# Lint settings only. The app itself has no dependencies to install.
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
