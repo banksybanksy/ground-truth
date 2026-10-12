@@ -20,6 +20,3 @@ data/cache.db-shm
 .vscode/
 .idea/
 *.swp
-
-# --- Local deploy tooling state ---
-.wrangler/

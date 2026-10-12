@@ -23,6 +23,17 @@ jobs:
         run: python -m py_compile server.py export_static.py tests/*.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: Committed data parses
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          files = sorted(pathlib.Path("static/data").rglob("*.json"))
+          if not files:
+              sys.exit("static/data has no JSON files")
+          for f in files:
+              json.loads(f.read_text())
+          print(f"{len(files)} data files parse")
+          PY
 
   lint:
     runs-on: ubuntu-latest
